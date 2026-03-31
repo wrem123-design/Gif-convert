@@ -9,6 +9,7 @@ import { SpriteFramePreviewPanel } from "./components/SpriteFramePreviewPanel";
 import { PixelHelperPanel } from "./components/PixelHelperPanel";
 import { LeshySpritePanel } from "./components/LeshySpritePanel";
 import { PhotoEditorPanel } from "./components/PhotoEditorPanel";
+import { IOPaintPanel } from "./components/IOPaintPanel";
 import { useEditorStore } from "./state/editorStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { usePlayback } from "./hooks/usePlayback";
@@ -88,8 +89,10 @@ const IconMap = () => (
 const IconImage = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.5-3.5a2.12 2.12 0 0 0-3 0L6 20"/></svg>
 );
-
-type AppTab = "sprite" | "pixel" | "export" | "bg_remove" | "pixel_helper" | "leshy_sprite" | "photo_editor";
+const IconSparkles = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8Z"/><path d="M5 17l.9 2.1L8 20l-2.1.9L5 23l-.9-2.1L2 20l2.1-.9Z"/><path d="M19 14l1 2 2 1-2 1-1 2-1-2-2-1 2-1Z"/></svg>
+);
+type AppTab = "sprite" | "pixel" | "export" | "bg_remove" | "pixel_helper" | "leshy_sprite" | "photo_editor" | "iopaint";
 
 export function App(): JSX.Element {
   const { t } = useI18n();
@@ -190,8 +193,10 @@ export function App(): JSX.Element {
           : tab === "bg_remove" ? t("tab_bg_remove")
             : tab === "pixel_helper" ? t("tab_pixel_helper")
               : tab === "leshy_sprite" ? t("tab_leshy_sprite")
-                : t("tab_photo_editor")
+                : tab === "photo_editor" ? t("tab_photo_editor")
+                  : t("tab_iopaint")
   );
+  const activeTabContext = tab === "iopaint" ? t("iopaint_toolbar_context") : t("toolbar_context_internal");
   const workspaceClassName = [
     "workspace-grid",
     tab === "sprite" ? "sprite-workspace" : "",
@@ -256,7 +261,8 @@ export function App(): JSX.Element {
     { id: "bg_remove", label: t("tab_bg_remove"), icon: <IconCut />, tone: "tool" },
     { id: "pixel_helper", label: t("tab_pixel_helper"), icon: <IconWand />, tone: "tool" },
     { id: "leshy_sprite", label: t("tab_leshy_sprite"), icon: <IconMap />, tone: "tool" },
-    { id: "photo_editor", label: t("tab_photo_editor"), icon: <IconImage />, tone: "tool" }
+    { id: "photo_editor", label: t("tab_photo_editor"), icon: <IconImage />, tone: "tool" },
+    { id: "iopaint", label: t("tab_iopaint"), icon: <IconSparkles />, tone: "tool" }
   ];
 
   return (
@@ -350,7 +356,7 @@ export function App(): JSX.Element {
               <div className="toolbar-separator" />
               <div className="toolbar-group toolbar-group-passive">
                 <span className="toolbar-label">{activeTabLabel}</span>
-                <span className="muted">{t("toolbar_context_internal")}</span>
+                <span className="muted">{activeTabContext}</span>
               </div>
             </>
           )}
@@ -367,6 +373,8 @@ export function App(): JSX.Element {
           <LeshySpritePanel />
         ) : tab === "photo_editor" ? (
           <PhotoEditorPanel />
+        ) : tab === "iopaint" ? (
+          <IOPaintPanel />
         ) : tab === "sprite" ? (
           <>
             <PixelEditorPanel mode="sprite" />

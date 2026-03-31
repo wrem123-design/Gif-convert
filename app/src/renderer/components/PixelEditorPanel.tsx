@@ -105,6 +105,14 @@ interface SelectionRect {
   h: number;
 }
 
+interface FloatingSelectionState {
+  sourceSelection: SelectionRect;
+  sourcePixels: ImageData;
+  baseLayerWithoutSelection: ImageData;
+}
+
+const CLONE_STAMP_RADIUS = 0;
+
 function clearRegionInImageData(image: ImageData, rect: SelectionRect): void {
   const x0 = Math.max(0, rect.x);
   const y0 = Math.max(0, rect.y);
@@ -155,6 +163,70 @@ function normalizeRect(rect: SelectionRect): SelectionRect {
   const w = Math.abs(rect.w);
   const h = Math.abs(rect.h);
   return { x, y, w, h };
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  const tag = target.tagName.toLowerCase();
+  return target.isContentEditable || tag === "input" || tag === "textarea" || tag === "select" || tag === "button";
+}
+
+function createFloatingSelectionState(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  rect: SelectionRect
+): FloatingSelectionState {
+  const normalized = normalizeRect(rect);
+  const sourcePixels = ctx.getImageData(normalized.x, normalized.y, normalized.w, normalized.h);
+  const baseLayerWithoutSelection = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
+  clearRegionInImageData(baseLayerWithoutSelection, normalized);
+  return {
+    sourceSelection: normalized,
+    sourcePixels,
+    baseLayerWithoutSelection
+  };
+}
+
+function drawFloatingSelection(
+  ctx: CanvasRenderingContext2D,
+  state: FloatingSelectionState,
+  targetX: number,
+  targetY: number
+): void {
+  ctx.putImageData(state.baseLayerWithoutSelection, 0, 0);
+  ctx.putImageData(state.sourcePixels, targetX, targetY);
+}
+
+function createDuplicatedSelectionState(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  sourceRect: SelectionRect,
+  targetX: number,
+  targetY: number
+): FloatingSelectionState {
+  const normalized = normalizeRect(sourceRect);
+  const sourcePixels = ctx.getImageData(normalized.x, normalized.y, normalized.w, normalized.h);
+  const baseLayerWithoutSelection = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
+  clearRegionInImageData(baseLayerWithoutSelection, {
+    x: targetX,
+    y: targetY,
+    w: normalized.w,
+    h: normalized.h
+  });
+  return {
+    sourceSelection: {
+      x: targetX,
+      y: targetY,
+      w: normalized.w,
+      h: normalized.h
+    },
+    sourcePixels,
+    baseLayerWithoutSelection
+  };
 }
 
 function getOpaqueBounds(ctx: CanvasRenderingContext2D, width: number, height: number): SelectionRect | null {
@@ -494,6 +566,9 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) {
+        return;
+      }
       if (!canvasRef.current || !selection) {
         return;
       }
@@ -516,6 +591,77 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
         }
         ctx.putImageData(clipboard.current, selection.x, selection.y);
       }
+
+      if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        const rect = normalizeRect(selection);
+        const image = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
+        clearRegionInImageData(image, rect);
+        ctx.putImageData(image, 0, 0);
+        drag.current = null;
+        setSelection(rect);
+        return;
+      }
+
+      const moveX = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+      const moveY = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
+      if (moveX === 0 && moveY === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      const step = event.shiftKey ? 10 : 1;
+      const rect = normalizeRect(selection);
+      const floatingSelection = event.altKey
+        ? createDuplicatedSelectionState(
+            ctx,
+            canvasRef.current.width,
+            canvasRef.current.height,
+            rect,
+            rect.x,
+            rect.y
+          )
+        : (
+            drag.current?.mode === "move"
+            && drag.current.sourceSelection
+            && drag.current.sourcePixels
+            && drag.current.baseLayerWithoutSelection
+          )
+          ? {
+              sourceSelection: drag.current.sourceSelection,
+              sourcePixels: drag.current.sourcePixels,
+              baseLayerWithoutSelection: drag.current.baseLayerWithoutSelection
+            }
+          : createFloatingSelectionState(ctx, canvasRef.current.width, canvasRef.current.height, rect);
+
+      const baseSelection = event.altKey ? floatingSelection.sourceSelection : rect;
+
+      const targetX = clamp(
+        baseSelection.x + moveX * step,
+        0,
+        canvasRef.current.width - floatingSelection.sourceSelection.w
+      );
+      const targetY = clamp(
+        baseSelection.y + moveY * step,
+        0,
+        canvasRef.current.height - floatingSelection.sourceSelection.h
+      );
+
+      drawFloatingSelection(ctx, floatingSelection, targetX, targetY);
+      drag.current = {
+        mode: "move",
+        startX: targetX,
+        startY: targetY,
+        sourceSelection: floatingSelection.sourceSelection,
+        sourcePixels: floatingSelection.sourcePixels,
+        baseLayerWithoutSelection: floatingSelection.baseLayerWithoutSelection
+      };
+      setSelection({
+        x: targetX,
+        y: targetY,
+        w: floatingSelection.sourceSelection.w,
+        h: floatingSelection.sourceSelection.h
+      });
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -604,18 +750,52 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const srcX = destX + offsetX;
-    const srcY = destY + offsetY;
-    if (srcX < 0 || srcY < 0 || srcX >= canvas.width || srcY >= canvas.height) {
-      return;
+    const brushLeft = Math.max(0, destX - CLONE_STAMP_RADIUS);
+    const brushTop = Math.max(0, destY - CLONE_STAMP_RADIUS);
+    const brushRight = Math.min(canvas.width - 1, destX + CLONE_STAMP_RADIUS);
+    const brushBottom = Math.min(canvas.height - 1, destY + CLONE_STAMP_RADIUS);
+    const brushWidth = brushRight - brushLeft + 1;
+    const brushHeight = brushBottom - brushTop + 1;
+    const image = ctx.getImageData(brushLeft, brushTop, brushWidth, brushHeight);
+
+    for (let localY = 0; localY < brushHeight; localY += 1) {
+      for (let localX = 0; localX < brushWidth; localX += 1) {
+        const targetX = brushLeft + localX;
+        const targetY = brushTop + localY;
+        const srcX = targetX + offsetX;
+        const srcY = targetY + offsetY;
+        if (srcX < 0 || srcY < 0 || srcX >= canvas.width || srcY >= canvas.height) {
+          continue;
+        }
+        const srcIndex = (srcY * canvas.width + srcX) * 4;
+        const destIndex = (localY * brushWidth + localX) * 4;
+        image.data[destIndex] = snapshot.data[srcIndex];
+        image.data[destIndex + 1] = snapshot.data[srcIndex + 1];
+        image.data[destIndex + 2] = snapshot.data[srcIndex + 2];
+        image.data[destIndex + 3] = snapshot.data[srcIndex + 3];
+      }
     }
-    const srcIndex = (srcY * canvas.width + srcX) * 4;
-    const image = ctx.getImageData(destX, destY, 1, 1);
-    image.data[0] = snapshot.data[srcIndex];
-    image.data[1] = snapshot.data[srcIndex + 1];
-    image.data[2] = snapshot.data[srcIndex + 2];
-    image.data[3] = snapshot.data[srcIndex + 3];
-    ctx.putImageData(image, destX, destY);
+
+    ctx.putImageData(image, brushLeft, brushTop);
+  };
+
+  const paintCloneStroke = (
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    snapshot: ImageData,
+    offsetX: number,
+    offsetY: number
+  ) => {
+    const deltaX = toX - fromX;
+    const deltaY = toY - fromY;
+    const steps = Math.max(Math.abs(deltaX), Math.abs(deltaY), 1);
+    for (let step = 0; step <= steps; step += 1) {
+      const x = Math.round(fromX + (deltaX * step) / steps);
+      const y = Math.round(fromY + (deltaY * step) / steps);
+      paintClonePixel(x, y, snapshot, offsetX, offsetY);
+    }
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -661,17 +841,20 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
         : false;
 
       if (inSelection && rect) {
-        const sourcePixels = ctx.getImageData(rect.x, rect.y, rect.w, rect.h);
-        const baseLayerWithoutSelection = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
-        clearRegionInImageData(baseLayerWithoutSelection, rect);
-        ctx.putImageData(baseLayerWithoutSelection, 0, 0);
+        const floatingSelection = createFloatingSelectionState(
+          ctx,
+          canvasRef.current.width,
+          canvasRef.current.height,
+          rect
+        );
+        drawFloatingSelection(ctx, floatingSelection, rect.x, rect.y);
         drag.current = {
           mode: "move",
           startX: x,
           startY: y,
-          sourceSelection: rect,
-          sourcePixels,
-          baseLayerWithoutSelection
+          sourceSelection: floatingSelection.sourceSelection,
+          sourcePixels: floatingSelection.sourcePixels,
+          baseLayerWithoutSelection: floatingSelection.baseLayerWithoutSelection
         };
       } else {
         setSelection({ x, y, w: 1, h: 1 });
@@ -706,7 +889,7 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
       const snapshot = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
       const offsetX = cloneSource.x - x;
       const offsetY = cloneSource.y - y;
-      paintClonePixel(x, y, snapshot, offsetX, offsetY);
+      paintCloneStroke(x, y, x, y, snapshot, offsetX, offsetY);
       drag.current = {
         mode: "clone",
         startX: x,
@@ -767,7 +950,15 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
     if (drag.current.mode === "clone" && drag.current.cloneSnapshot) {
       const offsetX = drag.current.cloneOffsetX ?? 0;
       const offsetY = drag.current.cloneOffsetY ?? 0;
-      paintClonePixel(x, y, drag.current.cloneSnapshot, offsetX, offsetY);
+      paintCloneStroke(
+        drag.current.startX,
+        drag.current.startY,
+        x,
+        y,
+        drag.current.cloneSnapshot,
+        offsetX,
+        offsetY
+      );
       drag.current.startX = x;
       drag.current.startY = y;
       return;
@@ -1130,6 +1321,9 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
           <span className="muted">
             {cloneSource ? `복제 원본: (${cloneSource.x}, ${cloneSource.y})` : "Alt+클릭으로 복제 원본 지정"}
           </span>
+        ) : null}
+        {selection ? (
+          <span className="muted">{t("pixel_selection_move_hint")}</span>
         ) : null}
         <span className="tool-divider" aria-hidden="true" />
         <label className="inline-tool">

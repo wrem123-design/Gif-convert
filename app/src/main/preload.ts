@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { IOPaintStatus } from "./iopaintManager";
 
 const api = {
   pickProjectDir: (): Promise<string> => ipcRenderer.invoke("dialog:pickProjectDir"),
@@ -13,6 +14,9 @@ const api = {
   pickLeshyAnimationSavePath: (defaultName: string): Promise<string | null> =>
     ipcRenderer.invoke("dialog:pickLeshyAnimationSavePath", defaultName),
   getDefaultProjectDir: (): Promise<string> => ipcRenderer.invoke("app:getDefaultProjectDir"),
+  getIOPaintStatus: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:getStatus"),
+  ensureIOPaintStarted: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:ensureStarted"),
+  restartIOPaint: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:restart"),
 
   loadProject: (payload: { projectDir: string }) => ipcRenderer.invoke("project:load", payload),
   saveProject: (payload: { projectDir: string; project: unknown }) => ipcRenderer.invoke("project:save", payload),
@@ -38,6 +42,13 @@ const api = {
     ) => callback(progress);
     ipcRenderer.on("tool:bgRemoveProgress", listener);
     return () => ipcRenderer.removeListener("tool:bgRemoveProgress", listener);
+  },
+  onIOPaintStatus: (
+    callback: (status: IOPaintStatus) => void
+  ): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: IOPaintStatus) => callback(status);
+    ipcRenderer.on("iopaint:status", listener);
+    return () => ipcRenderer.removeListener("iopaint:status", listener);
   },
 
   readImageDataUrl: (filePath: string): Promise<string> => ipcRenderer.invoke("file:readImageDataUrl", filePath),

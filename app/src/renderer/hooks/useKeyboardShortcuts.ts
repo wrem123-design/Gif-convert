@@ -25,11 +25,9 @@ export function useKeyboardShortcuts(tab: EditorTab): void {
         return;
       }
 
-      if (tab === "pixel_helper" || tab === "leshy_sprite") {
-        return;
-      }
+      const disableTimelineShortcuts = tab === "pixel" || tab === "pixel_helper" || tab === "leshy_sprite" || tab === "iopaint" || tab === "photo_editor";
 
-      if (event.code === "Space") {
+      if (!disableTimelineShortcuts && event.code === "Space") {
         event.preventDefault();
         setPlaying(!playing);
         return;
@@ -47,13 +45,13 @@ export function useKeyboardShortcuts(tab: EditorTab): void {
         return;
       }
 
-      if (event.key === "ArrowLeft") {
+      if (!disableTimelineShortcuts && event.key === "ArrowLeft") {
         event.preventDefault();
         stepFrame(-1);
         return;
       }
 
-      if (event.key === "ArrowRight") {
+      if (!disableTimelineShortcuts && event.key === "ArrowRight") {
         event.preventDefault();
         stepFrame(1);
         return;

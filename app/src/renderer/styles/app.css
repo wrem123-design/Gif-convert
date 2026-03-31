@@ -1488,6 +1488,186 @@ body.workspace-resizing {
 }
 
 /* ═══════════════════════════════════════
+   IOPaint Panel
+   ═══════════════════════════════════════ */
+
+.iopaint-page {
+  grid-column: 1 / 4;
+  grid-row: 1 / 3;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  background:
+    radial-gradient(circle at top left, rgba(95, 175, 255, 0.12), transparent 26%),
+    radial-gradient(circle at top right, rgba(58, 198, 194, 0.10), transparent 20%),
+    var(--bg-surface);
+}
+
+.iopaint-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.iopaint-runtime-toggle-summary {
+  padding: 6px 2px 0;
+}
+
+.iopaint-status-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015));
+}
+
+.iopaint-status-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 720px;
+}
+
+.iopaint-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(91, 156, 246, 0.32);
+  background: rgba(91, 156, 246, 0.14);
+  color: #d7e8ff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.iopaint-status-badge.phase-ready {
+  border-color: rgba(78, 203, 141, 0.3);
+  background: rgba(78, 203, 141, 0.14);
+  color: #cff6df;
+}
+
+.iopaint-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 10px;
+  flex: 1;
+  min-width: min(560px, 100%);
+}
+
+.iopaint-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.iopaint-meta-item span {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.iopaint-meta-item code {
+  display: block;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-input);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iopaint-log-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 180px;
+  max-height: 220px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: rgba(7, 11, 20, 0.72);
+  overflow: hidden;
+}
+
+.iopaint-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 0;
+}
+
+.iopaint-log-output {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 0 14px 14px;
+  color: #d8e0f2;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.iopaint-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(10, 16, 28, 0.92), rgba(10, 16, 28, 0.82)),
+    #0b1220;
+}
+
+.iopaint-frame-status {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(15, 17, 23, 0.86);
+  border: 1px solid var(--border-default);
+  backdrop-filter: blur(10px);
+}
+
+.iopaint-frame-status span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.iopaint-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+/* ═══════════════════════════════════════
    Pixel Helper Panel
    ═══════════════════════════════════════ */
 
@@ -3050,6 +3230,11 @@ body.pixel-helper-resizing {
     grid-row: 2 / 5;
   }
 
+  .iopaint-page {
+    grid-column: 1;
+    grid-row: 2 / 5;
+  }
+
   .pixel-helper-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -3072,6 +3257,18 @@ body.pixel-helper-resizing {
 
   .photo-editor-header {
     flex-direction: column;
+  }
+
+  .iopaint-header,
+  .iopaint-status-card,
+  .iopaint-log-header {
+    flex-direction: column;
+  }
+
+  .iopaint-meta-grid {
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .pixel-helper-preview {

@@ -1,6 +1,6 @@
 import type { Clip, Project } from "@sprite-forge/core";
 
-export type EditorTab = "sprite" | "pixel" | "export" | "bg_remove" | "pixel_helper" | "leshy_sprite" | "photo_editor";
+export type EditorTab = "sprite" | "pixel" | "export" | "bg_remove" | "pixel_helper" | "leshy_sprite" | "photo_editor" | "iopaint";
 
 export interface ExportSettings {
   exportMode: "sheet" | "sequence" | "gif";
