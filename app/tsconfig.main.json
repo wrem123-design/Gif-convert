@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "outDir": "dist/main",
+    "rootDir": "src/main",
+    "types": ["node", "electron"],
+    "lib": ["ES2022"],
+    "noEmit": false
+  },
+  "include": ["src/main/**/*"]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "sprite-forge",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "app",
+    "core"
+  ],
+  "scripts": {
+    "dev": "npm run build --workspace core && npm run dev --workspace app",
+    "build": "npm run build --workspace core && npm run build --workspace app",
+    "test": "npm run test --workspace core",
+    "package": "npm run build --workspace core && npm run package --workspace app",
+    "package:portable": "npm run build --workspace core && npm run package:portable --workspace app"
+  }
+}

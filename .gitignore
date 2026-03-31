@@ -1,0 +1,12 @@
+﻿node_modules/
+dist/
+coverage/
+*.log
+app/dist/
+app/release/
+core/dist/
+.scratch/
+.spriteforge/
+*.zip
+tmp-*/
+tmp_*.png
