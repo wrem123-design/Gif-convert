@@ -10,3 +10,5 @@ core/dist/
 *.zip
 tmp-*/
 tmp_*.png
+_external/bitmappery/
+_external/removebg/
