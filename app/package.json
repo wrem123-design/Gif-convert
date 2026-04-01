@@ -2,8 +2,8 @@
   "name": "sprite-forge-app",
   "version": "1.0.0",
   "main": "dist/main/main.js",
-  "description": "Sprite Forge desktop app",
-  "author": "Sprite Forge",
+  "description": "Sprite Studio desktop app",
+  "author": "Sprite Studio",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:main\" \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:main": "tsc -p tsconfig.main.json --watch",

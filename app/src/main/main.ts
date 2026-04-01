@@ -111,6 +111,7 @@ function createWindow(): BrowserWindow {
     minWidth: 1100,
     minHeight: 700,
     backgroundColor: "#1E1E1E",
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -125,6 +126,12 @@ function createWindow(): BrowserWindow {
   } else {
     void win.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
+
+  win.setMenuBarVisibility(false);
+  win.webContents.on("before-input-event", (_event, input) => {
+    // Keep Ctrl/Cmd shortcuts working, but let Alt pass through to embedded editors.
+    win.webContents.setIgnoreMenuShortcuts(!input.control && !input.meta);
+  });
 
   return win;
 }

@@ -196,7 +196,6 @@ export function App(): JSX.Element {
                 : tab === "photo_editor" ? t("tab_photo_editor")
                   : t("tab_iopaint")
   );
-  const activeTabContext = tab === "iopaint" ? t("iopaint_toolbar_context") : t("toolbar_context_internal");
   const workspaceClassName = [
     "workspace-grid",
     tab === "sprite" ? "sprite-workspace" : "",
@@ -284,9 +283,9 @@ export function App(): JSX.Element {
       <header className="top-chrome">
         <div className="top-bar top-bar-main">
           <div className="top-brand">
-            <div className="top-brand-mark">SF</div>
+            <div className="top-brand-mark">SS</div>
             <div className="top-brand-copy">
-              <strong>Sprite Forge</strong>
+              <strong>Sprite Studio</strong>
               <span className="muted">{t("toolbar_brand_subtitle")}</span>
             </div>
           </div>
@@ -356,7 +355,6 @@ export function App(): JSX.Element {
               <div className="toolbar-separator" />
               <div className="toolbar-group toolbar-group-passive">
                 <span className="toolbar-label">{activeTabLabel}</span>
-                <span className="muted">{activeTabContext}</span>
               </div>
             </>
           )}
@@ -476,16 +474,10 @@ export function App(): JSX.Element {
                 </div>
               </div>
 
-              {/* Language Info */}
-              <div className="settings-section">
-                <span className="settings-section-title">언어</span>
-                <p className="settings-info">현재 언어는 한국어로 고정되어 있습니다.</p>
-              </div>
-
               {/* App Info */}
               <div className="settings-section">
                 <span className="settings-section-title">정보</span>
-                <p className="settings-info">Sprite Forge v1.0 — 스프라이트 편집 & 내보내기 도구</p>
+                <p className="settings-info">Sprite Studio v1.0</p>
               </div>
             </div>
 

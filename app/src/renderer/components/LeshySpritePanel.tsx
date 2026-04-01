@@ -16,6 +16,36 @@ interface ExtractSpriteMapResult {
   sprites: SpriteMapEntry[];
 }
 
+interface LeshySpritePrefs {
+  mode: "auto" | "grid";
+  cols: number;
+  rows: number;
+  alphaThreshold: number;
+  mergeThreshold: number;
+  showLabels: boolean;
+  showOutline: boolean;
+  outputFormat: "text" | "json";
+  animationPlaying: boolean;
+  animationDelayMs: number;
+  animationFormat: "gif";
+}
+
+const leshySpritePrefsKey = "sprite_forge_leshy_sprite_prefs_v1";
+
+const defaultLeshySpritePrefs: LeshySpritePrefs = {
+  mode: "auto",
+  cols: 4,
+  rows: 4,
+  alphaThreshold: 0.04,
+  mergeThreshold: 1,
+  showLabels: true,
+  showOutline: true,
+  outputFormat: "text",
+  animationPlaying: true,
+  animationDelayMs: 120,
+  animationFormat: "gif"
+};
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -29,36 +59,105 @@ function baseNameOnly(filePath: string): string {
   return fileNameOnly(filePath).replace(/\.[^.]+$/, "");
 }
 
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, value));
+}
+
+function loadLeshySpritePrefs(): LeshySpritePrefs {
+  if (typeof window === "undefined") {
+    return { ...defaultLeshySpritePrefs };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(leshySpritePrefsKey);
+    if (!raw) {
+      return { ...defaultLeshySpritePrefs };
+    }
+    const parsed = JSON.parse(raw) as Partial<LeshySpritePrefs>;
+    return {
+      mode: parsed.mode === "grid" ? "grid" : "auto",
+      cols: Math.round(clampNumber(parsed.cols, defaultLeshySpritePrefs.cols, 1, 128)),
+      rows: Math.round(clampNumber(parsed.rows, defaultLeshySpritePrefs.rows, 1, 128)),
+      alphaThreshold: clampNumber(parsed.alphaThreshold, defaultLeshySpritePrefs.alphaThreshold, 0, 1),
+      mergeThreshold: Math.round(clampNumber(parsed.mergeThreshold, defaultLeshySpritePrefs.mergeThreshold, 0, 4096)),
+      showLabels: typeof parsed.showLabels === "boolean" ? parsed.showLabels : defaultLeshySpritePrefs.showLabels,
+      showOutline: typeof parsed.showOutline === "boolean" ? parsed.showOutline : defaultLeshySpritePrefs.showOutline,
+      outputFormat: parsed.outputFormat === "json" ? "json" : "text",
+      animationPlaying: typeof parsed.animationPlaying === "boolean" ? parsed.animationPlaying : defaultLeshySpritePrefs.animationPlaying,
+      animationDelayMs: Math.round(clampNumber(parsed.animationDelayMs, defaultLeshySpritePrefs.animationDelayMs, 20, 5000)),
+      animationFormat: "gif"
+    };
+  } catch {
+    return { ...defaultLeshySpritePrefs };
+  }
+}
+
 export function LeshySpritePanel(): JSX.Element {
   const { t } = useI18n();
+  const initialPrefs = useMemo(() => loadLeshySpritePrefs(), []);
   const [inputPath, setInputPath] = useState("");
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState({ width: 1, height: 1 });
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
-  const [mode, setMode] = useState<"auto" | "grid">("auto");
-  const [cols, setCols] = useState(4);
-  const [rows, setRows] = useState(4);
-  const [alphaThreshold, setAlphaThreshold] = useState(0.04);
-  const [mergeThreshold, setMergeThreshold] = useState(1);
+  const [mode, setMode] = useState<"auto" | "grid">(initialPrefs.mode);
+  const [cols, setCols] = useState(initialPrefs.cols);
+  const [rows, setRows] = useState(initialPrefs.rows);
+  const [alphaThreshold, setAlphaThreshold] = useState(initialPrefs.alphaThreshold);
+  const [mergeThreshold, setMergeThreshold] = useState(initialPrefs.mergeThreshold);
   const [sprites, setSprites] = useState<SpriteMapEntry[]>([]);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [showLabels, setShowLabels] = useState(true);
-  const [showOutline, setShowOutline] = useState(true);
+  const [showLabels, setShowLabels] = useState(initialPrefs.showLabels);
+  const [showOutline, setShowOutline] = useState(initialPrefs.showOutline);
   const [zoom, setZoom] = useState(1);
   const [userZoomed, setUserZoomed] = useState(false);
-  const [outputFormat, setOutputFormat] = useState<"text" | "json">("text");
-  const [animationPlaying, setAnimationPlaying] = useState(true);
+  const [outputFormat, setOutputFormat] = useState<"text" | "json">(initialPrefs.outputFormat);
+  const [animationPlaying, setAnimationPlaying] = useState(initialPrefs.animationPlaying);
   const [animationIndex, setAnimationIndex] = useState(0);
-  const [animationDelayMs, setAnimationDelayMs] = useState(120);
-  const [animationFormat, setAnimationFormat] = useState<"gif">("gif");
+  const [animationDelayMs, setAnimationDelayMs] = useState(initialPrefs.animationDelayMs);
+  const [animationFormat, setAnimationFormat] = useState<"gif">(initialPrefs.animationFormat);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; index: number } | null>(null);
   const previewScrollerRef = useRef<HTMLDivElement | null>(null);
   const previewPanRef = useRef<{ pointerId: number; startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const animationCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const spriteSheetImageRef = useRef<HTMLImageElement | null>(null);
   const [previewMiddlePanning, setPreviewMiddlePanning] = useState(false);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(leshySpritePrefsKey, JSON.stringify({
+        mode,
+        cols,
+        rows,
+        alphaThreshold,
+        mergeThreshold,
+        showLabels,
+        showOutline,
+        outputFormat,
+        animationPlaying,
+        animationDelayMs,
+        animationFormat
+      } satisfies LeshySpritePrefs));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [
+    alphaThreshold,
+    animationDelayMs,
+    animationFormat,
+    animationPlaying,
+    cols,
+    mergeThreshold,
+    mode,
+    outputFormat,
+    rows,
+    showLabels,
+    showOutline
+  ]);
 
   useEffect(() => {
     if (!inputPath) {

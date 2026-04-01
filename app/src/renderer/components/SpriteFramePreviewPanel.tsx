@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useFrameDataUrl } from "../hooks/useFrameDataUrl";
 import { useI18n } from "../i18n";
 import { useEditorStore } from "../state/editorStore";
@@ -8,6 +8,54 @@ import { ZoomableImagePreview } from "./ZoomableImagePreview";
 function fileNameOnly(filePath: string): string {
   const parts = filePath.split(/[\\/]/);
   return parts[parts.length - 1] || filePath;
+}
+
+const spritePreviewPrefsKey = "sprite_forge_sprite_preview_prefs_v1";
+
+interface SpritePreviewPrefs {
+  delayMs: number;
+  alphaThreshold: number;
+  mergeThreshold: number;
+  removeBackground: boolean;
+  backgroundTolerance: number;
+}
+
+const defaultSpritePreviewPrefs: SpritePreviewPrefs = {
+  delayMs: 100,
+  alphaThreshold: 0.04,
+  mergeThreshold: 1,
+  removeBackground: true,
+  backgroundTolerance: 0.12
+};
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, value));
+}
+
+function loadSpritePreviewPrefs(): SpritePreviewPrefs {
+  if (typeof window === "undefined") {
+    return { ...defaultSpritePreviewPrefs };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(spritePreviewPrefsKey);
+    if (!raw) {
+      return { ...defaultSpritePreviewPrefs };
+    }
+    const parsed = JSON.parse(raw) as Partial<SpritePreviewPrefs>;
+    return {
+      delayMs: Math.round(clampNumber(parsed.delayMs, defaultSpritePreviewPrefs.delayMs, 10, 5000)),
+      alphaThreshold: clampNumber(parsed.alphaThreshold, defaultSpritePreviewPrefs.alphaThreshold, 0, 1),
+      mergeThreshold: Math.round(clampNumber(parsed.mergeThreshold, defaultSpritePreviewPrefs.mergeThreshold, 0, 9999)),
+      removeBackground: typeof parsed.removeBackground === "boolean" ? parsed.removeBackground : defaultSpritePreviewPrefs.removeBackground,
+      backgroundTolerance: clampNumber(parsed.backgroundTolerance, defaultSpritePreviewPrefs.backgroundTolerance, 0, 1)
+    };
+  } catch {
+    return { ...defaultSpritePreviewPrefs };
+  }
 }
 
 export function SpriteFramePreviewPanel(): JSX.Element {
@@ -21,13 +69,28 @@ export function SpriteFramePreviewPanel(): JSX.Element {
   const cropFramesToActiveFrameSize = useEditorStore((s) => s.cropFramesToActiveFrameSize);
   const setActiveHelpTopic = useEditorStore((s) => s.setActiveHelpTopic);
   const clip = useCurrentClip();
+  const initialPrefs = useMemo(() => loadSpritePreviewPrefs(), []);
 
   const [inputPath, setInputPath] = useState("");
-  const [delayMs, setDelayMs] = useState(100);
-  const [alphaThreshold, setAlphaThreshold] = useState(0.04);
-  const [mergeThreshold, setMergeThreshold] = useState(1);
-  const [removeBackground, setRemoveBackground] = useState(true);
-  const [backgroundTolerance, setBackgroundTolerance] = useState(0.12);
+  const [delayMs, setDelayMs] = useState(initialPrefs.delayMs);
+  const [alphaThreshold, setAlphaThreshold] = useState(initialPrefs.alphaThreshold);
+  const [mergeThreshold, setMergeThreshold] = useState(initialPrefs.mergeThreshold);
+  const [removeBackground, setRemoveBackground] = useState(initialPrefs.removeBackground);
+  const [backgroundTolerance, setBackgroundTolerance] = useState(initialPrefs.backgroundTolerance);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(spritePreviewPrefsKey, JSON.stringify({
+        delayMs,
+        alphaThreshold,
+        mergeThreshold,
+        removeBackground,
+        backgroundTolerance
+      } satisfies SpritePreviewPrefs));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [alphaThreshold, backgroundTolerance, delayMs, mergeThreshold, removeBackground]);
 
   const frame = clip?.frames[activeFrameIndex] ?? null;
   const frameDataUrl = useFrameDataUrl(frame?.srcPath);

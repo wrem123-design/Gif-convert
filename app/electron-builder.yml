@@ -1,5 +1,5 @@
 appId: com.spriteforge.desktop
-productName: Sprite Forge
+productName: Sprite Studio
 electronVersion: 31.7.7
 directories:
   output: release

@@ -7,8 +7,24 @@ type MarkRemoverStatus = Awaited<ReturnType<SpriteForgeApi["getMarkRemoverStatus
 type MarkRemoverPreview = Awaited<ReturnType<SpriteForgeApi["previewMarkRemover"]>>;
 type ToolMode = "iopaint" | "markremover";
 type ForceFormat = "PNG" | "WEBP" | "JPG" | "MP4" | "AVI" | "";
+type InputSelectionKind = "" | "file" | "folder";
 
 const TOOL_MODE_KEY = "sprite_forge_ai_editor_mode_v1";
+const AI_EDITOR_PREFS_KEY = "sprite_forge_ai_editor_prefs_v1";
+
+interface AiEditorPrefs {
+  inputPath: string;
+  inputKind: InputSelectionKind;
+  outputPath: string;
+  detectionPrompt: string;
+  maxBBoxPercent: string;
+  transparent: boolean;
+  overwrite: boolean;
+  forceFormat: ForceFormat;
+  detectionSkip: string;
+  fadeIn: string;
+  fadeOut: string;
+}
 
 const DEFAULT_IOPAINT_STATUS: IOPaintStatus = {
   phase: "idle",
@@ -58,6 +74,67 @@ function loadToolMode(): ToolMode {
   }
 }
 
+function sanitizeForceFormat(value: unknown): ForceFormat {
+  return value === "PNG" || value === "WEBP" || value === "JPG" || value === "MP4" || value === "AVI" ? value : "";
+}
+
+function loadAiEditorPrefs(): AiEditorPrefs {
+  const defaults: AiEditorPrefs = {
+    inputPath: "",
+    inputKind: "",
+    outputPath: "",
+    detectionPrompt: "watermark",
+    maxBBoxPercent: "10",
+    transparent: false,
+    overwrite: false,
+    forceFormat: "",
+    detectionSkip: "1",
+    fadeIn: "0",
+    fadeOut: "0"
+  };
+
+  if (typeof window === "undefined") {
+    return defaults;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(AI_EDITOR_PREFS_KEY);
+    if (!raw) {
+      return defaults;
+    }
+    const parsed = JSON.parse(raw) as Partial<AiEditorPrefs>;
+    const inputKind: InputSelectionKind = parsed.inputKind === "file" || parsed.inputKind === "folder"
+      ? parsed.inputKind
+      : "";
+
+    return {
+      inputPath: inputKind === "folder" && typeof parsed.inputPath === "string" ? parsed.inputPath : "",
+      inputKind,
+      outputPath: typeof parsed.outputPath === "string" ? parsed.outputPath : defaults.outputPath,
+      detectionPrompt: typeof parsed.detectionPrompt === "string" && parsed.detectionPrompt.trim()
+        ? parsed.detectionPrompt
+        : defaults.detectionPrompt,
+      maxBBoxPercent: typeof parsed.maxBBoxPercent === "string" && parsed.maxBBoxPercent.trim()
+        ? parsed.maxBBoxPercent
+        : defaults.maxBBoxPercent,
+      transparent: typeof parsed.transparent === "boolean" ? parsed.transparent : defaults.transparent,
+      overwrite: typeof parsed.overwrite === "boolean" ? parsed.overwrite : defaults.overwrite,
+      forceFormat: sanitizeForceFormat(parsed.forceFormat),
+      detectionSkip: typeof parsed.detectionSkip === "string" && parsed.detectionSkip.trim()
+        ? parsed.detectionSkip
+        : defaults.detectionSkip,
+      fadeIn: typeof parsed.fadeIn === "string" && parsed.fadeIn.trim()
+        ? parsed.fadeIn
+        : defaults.fadeIn,
+      fadeOut: typeof parsed.fadeOut === "string" && parsed.fadeOut.trim()
+        ? parsed.fadeOut
+        : defaults.fadeOut
+    };
+  } catch {
+    return defaults;
+  }
+}
+
 function trimPath(value: string): string {
   return value.replace(/[\\/]+$/, "");
 }
@@ -70,21 +147,23 @@ function getBaseName(value: string): string {
 
 export function IOPaintPanel(): JSX.Element {
   const { t } = useI18n();
+  const initialPrefs = useMemo(() => loadAiEditorPrefs(), []);
   const [mode, setMode] = useState<ToolMode>(loadToolMode);
   const [status, setStatus] = useState<IOPaintStatus>(DEFAULT_IOPAINT_STATUS);
   const [aiStatus, setAiStatus] = useState<MarkRemoverStatus>(DEFAULT_MARKREMOVER_STATUS);
   const [frameKey, setFrameKey] = useState(0);
   const [frameLoaded, setFrameLoaded] = useState(false);
-  const [inputPath, setInputPath] = useState("");
-  const [outputPath, setOutputPath] = useState("");
-  const [detectionPrompt, setDetectionPrompt] = useState("watermark");
-  const [maxBBoxPercent, setMaxBBoxPercent] = useState("10");
-  const [transparent, setTransparent] = useState(false);
-  const [overwrite, setOverwrite] = useState(false);
-  const [forceFormat, setForceFormat] = useState<ForceFormat>("");
-  const [detectionSkip, setDetectionSkip] = useState("1");
-  const [fadeIn, setFadeIn] = useState("0");
-  const [fadeOut, setFadeOut] = useState("0");
+  const [inputPath, setInputPath] = useState(initialPrefs.inputPath);
+  const [inputKind, setInputKind] = useState<InputSelectionKind>(initialPrefs.inputKind);
+  const [outputPath, setOutputPath] = useState(initialPrefs.outputPath);
+  const [detectionPrompt, setDetectionPrompt] = useState(initialPrefs.detectionPrompt);
+  const [maxBBoxPercent, setMaxBBoxPercent] = useState(initialPrefs.maxBBoxPercent);
+  const [transparent, setTransparent] = useState(initialPrefs.transparent);
+  const [overwrite, setOverwrite] = useState(initialPrefs.overwrite);
+  const [forceFormat, setForceFormat] = useState<ForceFormat>(initialPrefs.forceFormat);
+  const [detectionSkip, setDetectionSkip] = useState(initialPrefs.detectionSkip);
+  const [fadeIn, setFadeIn] = useState(initialPrefs.fadeIn);
+  const [fadeOut, setFadeOut] = useState(initialPrefs.fadeOut);
   const [preview, setPreview] = useState<MarkRemoverPreview | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
@@ -97,6 +176,38 @@ export function IOPaintPanel(): JSX.Element {
       // Ignore storage write failures.
     }
   }, [mode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(AI_EDITOR_PREFS_KEY, JSON.stringify({
+        inputPath: inputKind === "folder" ? inputPath : "",
+        inputKind,
+        outputPath,
+        detectionPrompt,
+        maxBBoxPercent,
+        transparent,
+        overwrite,
+        forceFormat,
+        detectionSkip,
+        fadeIn,
+        fadeOut
+      } satisfies AiEditorPrefs));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [
+    detectionPrompt,
+    detectionSkip,
+    fadeIn,
+    fadeOut,
+    forceFormat,
+    inputKind,
+    inputPath,
+    maxBBoxPercent,
+    outputPath,
+    overwrite,
+    transparent
+  ]);
 
   useEffect(() => {
     let mounted = true;
@@ -181,6 +292,7 @@ export function IOPaintPanel(): JSX.Element {
     if (!nextInput) {
       return;
     }
+    setInputKind("file");
     setInputPath(nextInput);
   };
 
@@ -190,6 +302,7 @@ export function IOPaintPanel(): JSX.Element {
     if (!nextInput) {
       return;
     }
+    setInputKind("folder");
     setInputPath(nextInput);
   };
 
@@ -320,7 +433,7 @@ export function IOPaintPanel(): JSX.Element {
       <div className="iopaint-header">
         <div>
           <h2>{t("tab_iopaint")}</h2>
-          <p className="muted">{t("iopaint_desc")}</p>
+          {t("iopaint_desc") ? <p className="muted">{t("iopaint_desc")}</p> : null}
         </div>
         <div className="row-buttons iopaint-mode-toggle">
           <button type="button" className={mode === "iopaint" ? "active" : ""} onClick={() => setMode("iopaint")}>
@@ -384,7 +497,7 @@ export function IOPaintPanel(): JSX.Element {
             <div className="iopaint-log-card">
               <div className="iopaint-log-header">
                 <strong>{t("iopaint_log_title")}</strong>
-                <span className="muted">{t("iopaint_log_desc")}</span>
+                {t("iopaint_log_desc") ? <span className="muted">{t("iopaint_log_desc")}</span> : null}
               </div>
               <pre className="iopaint-log-output">
                 {[...status.logs, ...aiStatus.logs].length ? [...status.logs, ...aiStatus.logs].join("\n") : t("iopaint_log_empty")}
@@ -419,7 +532,6 @@ export function IOPaintPanel(): JSX.Element {
                 {!status.ready || !frameLoaded ? (
                   <div className="iopaint-frame-status">
                     <strong>{status.ready ? t("iopaint_loading_frame") : t("iopaint_connecting")}</strong>
-                    <span>{status.url}</span>
                   </div>
                 ) : null}
                 {status.ready ? (
@@ -472,7 +584,12 @@ export function IOPaintPanel(): JSX.Element {
 
                   <label>
                     <span>{t("markremover_input")}</span>
-                    <input type="text" value={inputPath} onChange={(event) => setInputPath(event.target.value)} placeholder="C:\\" />
+                    <input
+                      type="text"
+                      value={inputPath}
+                      onChange={(event) => setInputPath(event.target.value)}
+                      placeholder="C:\\"
+                    />
                   </label>
                   <label>
                     <span>{t("markremover_output")}</span>
@@ -603,7 +720,7 @@ export function IOPaintPanel(): JSX.Element {
                 <div className="iopaint-log-card markremover-log-card">
                   <div className="iopaint-log-header">
                     <strong>{t("markremover_logs")}</strong>
-                    <span className="muted">{t("markremover_external_note")}</span>
+                    {t("markremover_external_note") ? <span className="muted">{t("markremover_external_note")}</span> : null}
                   </div>
                   <pre className="iopaint-log-output">
                     {aiStatus.logs.length ? aiStatus.logs.join("\n") : t("iopaint_log_empty")}

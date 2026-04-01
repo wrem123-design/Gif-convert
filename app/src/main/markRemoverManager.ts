@@ -41,7 +41,7 @@ const UI_THEME_MARKER = "sprite-forge-markremover-theme";
 
 const KO_TRANSLATIONS = {
   app: {
-    title: "Sprite Forge AI Remover",
+    title: "Sprite Studio AI Remover",
     brandLine1: "AI",
     brandLine2: "리무버"
   },
@@ -649,7 +649,7 @@ async function patchIndexHtml(entryHtml: string): Promise<void> {
 
   let html = await fs.readFile(entryHtml, "utf8");
   const replacements: Array<[string, string]> = [
-    ["<title>WM REMOVER - OHIO EDITION</title>", "<title>Sprite Forge AI Remover</title>"],
+    ["<title>WM REMOVER - OHIO EDITION</title>", "<title>Sprite Studio AI Remover</title>"],
     ['x-show="availableThemes.length > 0"', 'x-show="availableThemes.length > 1"'],
     ['x-show="availableLanguages.length > 0"', 'x-show="availableLanguages.length > 1"'],
     [
@@ -658,12 +658,12 @@ async function patchIndexHtml(entryHtml: string): Promise<void> {
     ],
     ["theme: 'brainrot',  // Default theme for loading screen", "theme: 'spriteforge',"],
     ["lang: 'en',", "lang: 'ko',"],
-    ["this.availableThemes = [{ id: 'brainrot' }];", "this.availableThemes = [{ id: 'spriteforge', name: 'Sprite Forge' }];"],
+    ["this.availableThemes = [{ id: 'brainrot' }];", "this.availableThemes = [{ id: 'spriteforge', name: 'Sprite Studio' }];"],
     [
       "this.availableLanguages = [{ id: 'brainrot', randomizable: true }, { id: 'en', randomizable: false }];",
       "this.availableLanguages = [{ id: 'ko', icon: 'KO', name: '한국어', randomizable: false }, { id: 'en', icon: 'EN', name: 'English', randomizable: false }];"
     ],
-    ["document.title = this.t.app?.title || 'WM Remover';", "document.title = this.t.app?.title || 'Sprite Forge AI Remover';"],
+    ["document.title = this.t.app?.title || 'WM Remover';", "document.title = this.t.app?.title || 'Sprite Studio AI Remover';"],
     ["WM<br>REMOVER", "<span x-text=\"t.app?.brandLine1 || 'AI'\"></span><br><span x-text=\"t.app?.brandLine2 || '리무버'\"></span>"]
   ];
 
@@ -680,8 +680,8 @@ async function patchGuiScript(guiScript: string): Promise<void> {
   }
 
   let script = await fs.readFile(guiScript, "utf8");
-  script = script.replace("WatermarkRemover-AI GUI - Ohio Edition", "Sprite Forge AI Remover GUI");
-  script = script.replace("'WatermarkRemover AI - Ohio Edition'", "'Sprite Forge AI Remover'");
+  script = script.replace("WatermarkRemover-AI GUI - Ohio Edition", "Sprite Studio AI Remover GUI");
+  script = script.replace("'WatermarkRemover AI - Ohio Edition'", "'Sprite Studio AI Remover'");
   await fs.writeFile(guiScript, script, "utf8");
 }
 
@@ -730,7 +730,7 @@ async function applyUiCustomizations(): Promise<void> {
     uiConfigPath,
     {
       version: "0.67",
-      themes: [{ id: "spriteforge", name: "Sprite Forge" }],
+      themes: [{ id: "spriteforge", name: "Sprite Studio" }],
       languages: [{ id: "ko", icon: "KO", name: "한국어", randomizable: false }]
     },
     { spaces: 2 }

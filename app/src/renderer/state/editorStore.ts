@@ -68,6 +68,7 @@ const defaultSpriteSheetSettings: SpriteSheetSettings = {
 const editorPrefsStorageKey = "sprite_forge_editor_prefs_v1";
 
 interface PersistedEditorPrefs {
+  projectDir: string;
   tab: EditorTab;
   viewport: ViewportSettings;
   exportSettings: ExportSettings;
@@ -104,6 +105,7 @@ function sanitizeEditorPrefs(raw: unknown): PersistedEditorPrefs {
     : "sprite";
 
   return {
+    projectDir: typeof source.projectDir === "string" ? source.projectDir : "",
     tab,
     viewport: {
       zoom: finiteNumber(viewportRaw.zoom, defaultViewport.zoom, 0.2, 30),
@@ -161,8 +163,9 @@ function persistEditorPrefs(prefs: PersistedEditorPrefs): void {
   }
 }
 
-function pickPersistedEditorPrefs(state: Pick<EditorStore, "tab" | "viewport" | "exportSettings" | "spriteSheetSettings" | "activeHelpTopic">): PersistedEditorPrefs {
+function pickPersistedEditorPrefs(state: Pick<EditorStore, "projectDir" | "tab" | "viewport" | "exportSettings" | "spriteSheetSettings" | "activeHelpTopic">): PersistedEditorPrefs {
   return {
+    projectDir: state.projectDir,
     tab: state.tab,
     viewport: { ...state.viewport },
     exportSettings: { ...state.exportSettings },
@@ -225,8 +228,15 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   fitViewToken: 0,
 
   init: async () => {
+    const persistedDir = initialEditorPrefs.projectDir.trim();
     const defaultDir = await window.spriteForge.getDefaultProjectDir();
-    await get().loadProject(defaultDir);
+    const targetDir = persistedDir || defaultDir;
+
+    await get().loadProject(targetDir);
+
+    if (persistedDir && persistedDir !== defaultDir && !get().project) {
+      await get().loadProject(defaultDir);
+    }
   },
 
   loadProject: async (projectDir) => {
