@@ -2,6 +2,7 @@ import { app, BrowserWindow } from "electron";
 import path from "node:path";
 import fs from "fs-extra";
 import { spawn, type ChildProcess } from "node:child_process";
+import sharp from "sharp";
 
 const MARKREMOVER_REPO_URL = "https://github.com/D-Ogi/WatermarkRemover-AI.git";
 const LOG_LIMIT = 120;
@@ -319,6 +320,11 @@ export interface MarkRemoverRunOptions {
   detectionSkip: number;
   fadeIn: number;
   fadeOut: number;
+}
+
+export interface MarkRemoverRunResult {
+  status: MarkRemoverStatus;
+  outputPath: string | null;
 }
 
 export interface MarkRemoverStatus {
@@ -910,6 +916,123 @@ function buildRunArgs(options: MarkRemoverRunOptions): string[] {
   return args;
 }
 
+function isStillImagePath(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"].includes(ext);
+}
+
+function isAlphaCapableOutputPath(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return [".png", ".webp", ".tif", ".tiff"].includes(ext);
+}
+
+async function preserveOriginalAlpha(inputPath: string, outputPath: string): Promise<void> {
+  if (!isStillImagePath(inputPath) || !isStillImagePath(outputPath) || !isAlphaCapableOutputPath(outputPath)) {
+    return;
+  }
+
+  const inputMeta = await sharp(inputPath).metadata();
+  if (!inputMeta.hasAlpha) {
+    return;
+  }
+
+  const outputMeta = await sharp(outputPath).metadata();
+  if (!outputMeta.width || !outputMeta.height) {
+    return;
+  }
+
+  const inputRaw = await sharp(inputPath)
+    .ensureAlpha()
+    .resize(outputMeta.width, outputMeta.height, { fit: "fill" })
+    .raw()
+    .toBuffer();
+
+  const outputRaw = await sharp(outputPath)
+    .ensureAlpha()
+    .raw()
+    .toBuffer();
+
+  if (inputRaw.length !== outputRaw.length) {
+    appendLog(`알파 보정 크기가 맞지 않아 건너뜁니다: ${outputPath}`);
+    return;
+  }
+
+  const merged = Buffer.from(outputRaw);
+  for (let index = 3; index < merged.length; index += 4) {
+    merged[index] = Math.min(inputRaw[index] ?? 255, outputRaw[index] ?? 255);
+  }
+
+  let image = sharp(merged, {
+    raw: {
+      width: outputMeta.width,
+      height: outputMeta.height,
+      channels: 4
+    }
+  });
+
+  const ext = path.extname(outputPath).toLowerCase();
+  if (ext === ".webp") {
+    image = image.webp();
+  } else if (ext === ".tif" || ext === ".tiff") {
+    image = image.tiff();
+  } else {
+    image = image.png();
+  }
+
+  await image.toFile(outputPath);
+  appendLog(`원본 투명도를 유지하도록 알파를 복원했습니다: ${outputPath}`);
+}
+
+async function resolveRunOutputPath(outputPath: string): Promise<{ outputPath: string }> {
+  const normalizedOutput = outputPath.trim();
+  if (normalizedOutput) {
+    return { outputPath: normalizedOutput };
+  }
+
+  const tempRoot = path.join(app.getPath("userData"), "markremover-preview-output");
+  const tempRunDir = path.join(tempRoot, `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`);
+  await fs.ensureDir(tempRunDir);
+  appendLog(`임시 결과 폴더를 사용합니다: ${tempRunDir}`);
+  return { outputPath: tempRunDir };
+}
+
+async function findNewestFile(rootPath: string): Promise<string | null> {
+  if (!(await fs.pathExists(rootPath))) {
+    return null;
+  }
+
+  const stats = await fs.stat(rootPath);
+  if (stats.isFile()) {
+    return rootPath;
+  }
+
+  const entries = await fs.readdir(rootPath);
+  let newestPath: string | null = null;
+  let newestMtime = 0;
+
+  for (const entry of entries) {
+    const candidatePath = path.join(rootPath, entry);
+    const candidateStats = await fs.stat(candidatePath);
+    if (!candidateStats.isFile()) {
+      continue;
+    }
+    const mtime = candidateStats.mtimeMs;
+    if (!newestPath || mtime >= newestMtime) {
+      newestPath = candidatePath;
+      newestMtime = mtime;
+    }
+  }
+
+  return newestPath;
+}
+
+async function resolveFinalOutputPath(runOutputPath: string, reportedOutputPath: string | null): Promise<string | null> {
+  if (reportedOutputPath && await fs.pathExists(reportedOutputPath)) {
+    return reportedOutputPath;
+  }
+  return await findNewestFile(runOutputPath);
+}
+
 function ensureNoActiveCliTask(): void {
   if (cliProcess && cliProcess.exitCode === null && !cliProcess.killed) {
     throw new Error("이미 AI 작업이 실행 중입니다.");
@@ -1024,12 +1147,16 @@ export async function previewMarkRemover(options: MarkRemoverPreviewOptions): Pr
   }
 }
 
-export async function runMarkRemover(options: MarkRemoverRunOptions): Promise<MarkRemoverStatus> {
+export async function runMarkRemover(options: MarkRemoverRunOptions): Promise<MarkRemoverRunResult> {
   await ensureMarkRemoverInstalled();
   ensureNoActiveCliTask();
 
   const { repoDir, pythonExe } = getRuntimePaths();
-  const args = buildRunArgs(options);
+  const { outputPath: resolvedOutputPath } = await resolveRunOutputPath(options.outputPath);
+  const args = buildRunArgs({
+    ...options,
+    outputPath: resolvedOutputPath
+  });
 
   setStatus({
     phase: getReadyPhase(),
@@ -1044,6 +1171,7 @@ export async function runMarkRemover(options: MarkRemoverRunOptions): Promise<Ma
   let stdoutRemainder = "";
   let stderrRemainder = "";
   let lastOutputPath: string | null = null;
+  const processedOutputs = new Map<string, string>();
   cliStopRequested = false;
 
   let wasStopped = false;
@@ -1064,10 +1192,15 @@ export async function runMarkRemover(options: MarkRemoverRunOptions): Promise<Ma
           const progress = Number.parseInt(progressMatch[1] ?? "0", 10);
           const detailMatch = line.match(/input_path:(.+?), output_path:(.+?), overall_progress:(\d+)%/i);
           if (detailMatch) {
-            lastOutputPath = detailMatch[2]?.trim() ?? lastOutputPath;
+            const nextInputPath = detailMatch[1]?.trim() ?? currentStatus.currentPath ?? options.inputPath;
+            const nextOutputPath = detailMatch[2]?.trim() ?? lastOutputPath;
+            lastOutputPath = nextOutputPath || lastOutputPath;
+            if (nextInputPath && nextOutputPath) {
+              processedOutputs.set(nextInputPath, nextOutputPath);
+            }
             setStatus({
               progress,
-              currentPath: detailMatch[1]?.trim() ?? currentStatus.currentPath,
+              currentPath: nextInputPath,
               lastOutputPath
             });
           } else {
@@ -1115,16 +1248,34 @@ export async function runMarkRemover(options: MarkRemoverRunOptions): Promise<Ma
       });
     });
 
+    for (const [inputPath, outputPath] of processedOutputs.entries()) {
+      await preserveOriginalAlpha(inputPath, outputPath).catch((error) => {
+        appendLog(`알파 복원 실패: ${outputPath} (${error instanceof Error ? error.message : String(error)})`);
+      });
+    }
+
+    if (processedOutputs.size === 0) {
+      const finalOutputPath = await resolveFinalOutputPath(resolvedOutputPath, lastOutputPath);
+      if (finalOutputPath) {
+        await preserveOriginalAlpha(options.inputPath, finalOutputPath).catch((error) => {
+          appendLog(`알파 복원 실패: ${finalOutputPath} (${error instanceof Error ? error.message : String(error)})`);
+        });
+      }
+    }
+
     setStatus({
       phase: getReadyPhase(),
       message: wasStopped ? "워터마크 제거가 중지되었습니다." : "워터마크 제거가 완료되었습니다.",
       taskState: "idle",
       progress: wasStopped ? 0 : 100,
-      lastOutputPath,
+      lastOutputPath: await resolveFinalOutputPath(resolvedOutputPath, lastOutputPath),
       error: null
     });
 
-    return currentStatus;
+    return {
+      status: currentStatus,
+      outputPath: currentStatus.lastOutputPath
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     setStatus({

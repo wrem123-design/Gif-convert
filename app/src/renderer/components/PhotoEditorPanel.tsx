@@ -4,9 +4,10 @@ import { useI18n } from "../i18n";
 const PHOTO_EDITOR_BUNDLE_VERSION = "2026-03-31-ko-pan";
 const PHOTO_EDITOR_HOST_ID = "sprite-forge-photo-editor-host";
 
-function buildSelectionNudgePatch(mainScriptUrl: string, hostSelector: string): string {
+function buildSelectionNudgePatch(mainScriptUrl: string, hostSelector: string, sessionToken: string): string {
   return `
 const HOST_SELECTOR = ${JSON.stringify(hostSelector)};
+const SESSION_TOKEN = ${JSON.stringify(sessionToken)};
 const getHostRoot = () => document.querySelector(HOST_SELECTOR);
 const getStore = () => {
   const hostRoot = getHostRoot();
@@ -29,12 +30,17 @@ const FLOATING_STATE_KEY = "__spriteForgeFloatingSelectionState";
 const PREVIOUS_TOOL_KEY = "__spriteForgeCutMovePreviousTool";
 const CROP_PREVIOUS_TOOL_KEY = "__spriteForgeCropPreviousTool";
 const ALT_STATE_KEY = "__spriteForgeAltPressed";
+const ALT_RELEASE_AT_KEY = "__spriteForgeAltReleasedAt";
+const ALT_RELEASE_RAF_KEY = "__spriteForgeAltReleaseRaf";
 const POINTER_STATE_KEY = "__spriteForgePointerState";
 const FILE_BRIDGE_CLEANUP_KEY = "__spriteForgePhotoEditorFileBridgeCleanup";
 const FILE_BRIDGE_BUSY_KEY = "__spriteForgePhotoEditorFileBridgeBusy";
 const CROP_STATE_KEY = "__spriteForgeCropState";
 const MODULE_KEY = "__spriteForgePhotoEditorModule";
 const DIRECT_LAYER_ADD_KEY = "__spriteForgeDirectGraphicLayerAddRequestedAt";
+const SESSION_KEY = "__spriteForgePhotoEditorSessionToken";
+const PATCHED_TOKEN_KEY = "__spriteForgePhotoEditorPatchedToken";
+const ALT_RELEASE_COOLDOWN_MS = 90;
 
 const isToolActive = () => window.__spriteForgeCutMoveToolActive === true;
 const setToolActive = (next) => {
@@ -89,6 +95,17 @@ const getCropPreviousTool = () => window[CROP_PREVIOUS_TOOL_KEY] ?? null;
 const isAltTrackedDown = () => window[ALT_STATE_KEY] === true;
 const setAltTrackedDown = (next) => {
   window[ALT_STATE_KEY] = next;
+};
+const getAltReleaseAt = () => Number(window[ALT_RELEASE_AT_KEY] || 0);
+const setAltReleaseAt = (value) => {
+  window[ALT_RELEASE_AT_KEY] = value;
+};
+const clearScheduledAltRefresh = () => {
+  const scheduled = Number(window[ALT_RELEASE_RAF_KEY] || 0);
+  if (scheduled && typeof window.cancelAnimationFrame === "function") {
+    window.cancelAnimationFrame(scheduled);
+  }
+  window[ALT_RELEASE_RAF_KEY] = 0;
 };
 const getPointerState = () => window[POINTER_STATE_KEY] || null;
 const setPointerState = (state) => {
@@ -219,6 +236,52 @@ const forceClosePhotoEditorModal = (store) => {
       element.parentNode.removeChild(element);
     }
   });
+};
+
+const isNewLayerModalElement = (element) => {
+  if (!(element instanceof HTMLElement) || !element.classList.contains("modal")) {
+    return false;
+  }
+  const text = (element.textContent || "").replace(/\\s+/g, " ").trim();
+  if (!text) {
+    return false;
+  }
+  return [
+    "새 레이어 추가",
+    "Add new layer",
+    "레이어 유형",
+    "Layer type",
+    "그래픽",
+    "Graphic",
+    "텍스트",
+    "Text"
+  ].some((token) => text.includes(token));
+};
+
+const suppressNewLayerModalIfNeeded = (store, mod, sourceNode = null) => {
+  const hostRoot = getHostRoot();
+  if (!hostRoot) {
+    return false;
+  }
+  const candidates = [];
+  if (sourceNode instanceof HTMLElement) {
+    if (sourceNode.classList.contains("modal")) {
+      candidates.push(sourceNode);
+    }
+    candidates.push(...Array.from(sourceNode.querySelectorAll(".modal")));
+  }
+  candidates.push(...Array.from(hostRoot.querySelectorAll(".modal")));
+  const modal = candidates.find((element, index) => candidates.indexOf(element) === index && isNewLayerModalElement(element));
+  if (!modal) {
+    return false;
+  }
+  if (!hasPendingDirectGraphicLayerAdd()) {
+    markDirectGraphicLayerAdd();
+    createGraphicLayerDirectly(store, mod);
+  }
+  clearDirectGraphicLayerAdd();
+  forceClosePhotoEditorModal(store);
+  return true;
 };
 
 const ensureNotificationPatch = (store, mod) => {
@@ -1507,11 +1570,17 @@ const ensureCropToolButton = () => {
 };
 
 const dispatchAltRelease = (force = false) => {
-  if (!force && !isAltTrackedDown()) {
+  const wasTrackedDown = isAltTrackedDown();
+  const now = Date.now();
+  if (!force && !wasTrackedDown) {
+    return;
+  }
+  if (!wasTrackedDown && force && now - getAltReleaseAt() < ALT_RELEASE_COOLDOWN_MS) {
     return;
   }
   setAltTrackedDown(false);
-  const altUp = new KeyboardEvent("keyup", {
+  setAltReleaseAt(now);
+  const createAltUpEvent = () => new KeyboardEvent("keyup", {
     key: "Alt",
     code: "AltLeft",
     keyCode: 18,
@@ -1519,74 +1588,69 @@ const dispatchAltRelease = (force = false) => {
     bubbles: true,
     cancelable: true
   });
-  const targets = [];
   const pointerState = getPointerState();
   const hostRoot = getHostRoot();
   const store = getStore();
   const activeDocument = store && store.getters ? store.getters.activeDocument : null;
   const canvas = activeDocument ? getCanvasForDocument(activeDocument) : null;
+  const hovered = pointerState && Number.isFinite(pointerState.clientX) && Number.isFinite(pointerState.clientY)
+    ? document.elementFromPoint(pointerState.clientX, pointerState.clientY)
+    : null;
+  const primaryTarget = [
+    document.activeElement,
+    hovered,
+    canvas,
+    hostRoot
+  ].find((target) => target && typeof target.dispatchEvent === "function") || null;
 
-  targets.push(window, document);
-  if (hostRoot) {
-    targets.push(hostRoot);
+  if (typeof document.dispatchEvent === "function") {
+    document.dispatchEvent(createAltUpEvent());
   }
-  if (canvas) {
-    targets.push(canvas);
+  if (primaryTarget && primaryTarget !== document) {
+    primaryTarget.dispatchEvent(createAltUpEvent());
   }
-  if (document.activeElement && typeof document.activeElement.dispatchEvent === "function") {
-    targets.push(document.activeElement);
-  }
+
+  clearScheduledAltRefresh();
   if (pointerState && Number.isFinite(pointerState.clientX) && Number.isFinite(pointerState.clientY)) {
-    const hovered = document.elementFromPoint(pointerState.clientX, pointerState.clientY);
-    if (hovered) {
-      targets.push(hovered);
+    const refreshTarget = primaryTarget || hovered || canvas || hostRoot;
+    if (refreshTarget && typeof refreshTarget.dispatchEvent === "function" && typeof window.requestAnimationFrame === "function") {
+      window[ALT_RELEASE_RAF_KEY] = window.requestAnimationFrame(() => {
+        window[ALT_RELEASE_RAF_KEY] = 0;
+        const moveInit = {
+          bubbles: true,
+          cancelable: true,
+          clientX: pointerState.clientX,
+          clientY: pointerState.clientY,
+          screenX: pointerState.screenX ?? pointerState.clientX,
+          screenY: pointerState.screenY ?? pointerState.clientY,
+          altKey: false,
+          buttons: pointerState.buttons ?? 0,
+          button: -1
+        };
+        try {
+          refreshTarget.dispatchEvent(new MouseEvent("mousemove", moveInit));
+        } catch (_error) {
+          // Ignore cursor refresh failures; the Alt state has already been cleared.
+        }
+      });
     }
-  }
-
-  const uniqueTargets = Array.from(new Set(targets.filter(Boolean)));
-  uniqueTargets.forEach((target) => {
-    if (target && typeof target.dispatchEvent === "function") {
-      target.dispatchEvent(altUp);
-    }
-  });
-
-  if (pointerState && Number.isFinite(pointerState.clientX) && Number.isFinite(pointerState.clientY)) {
-    const moveInit = {
-      bubbles: true,
-      cancelable: true,
-      clientX: pointerState.clientX,
-      clientY: pointerState.clientY,
-      screenX: pointerState.screenX ?? pointerState.clientX,
-      screenY: pointerState.screenY ?? pointerState.clientY,
-      altKey: false,
-      buttons: pointerState.buttons ?? 0,
-      button: -1
-    };
-    const hovered = document.elementFromPoint(pointerState.clientX, pointerState.clientY);
-    const moveTargets = Array.from(new Set([hovered, document.activeElement, canvas, hostRoot].filter(Boolean)));
-    moveTargets.forEach((target) => {
-      if (!target || typeof target.dispatchEvent !== "function") {
-        return;
-      }
-      try {
-        target.dispatchEvent(new PointerEvent("pointermove", moveInit));
-      } catch (_error) {
-        target.dispatchEvent(new MouseEvent("mousemove", moveInit));
-      }
-    });
   }
 };
 
 const ensurePatched = async () => {
-  const mod = await import(${JSON.stringify(mainScriptUrl)});
-  if (typeof window.__spriteForgePhotoEditorCleanup === "function") {
-    window.__spriteForgePhotoEditorCleanup();
+  if (window[SESSION_KEY] !== SESSION_TOKEN) {
+    return;
   }
-  if (window.__spriteForgePhotoEditorPatched) {
+  const mod = await import(${JSON.stringify(mainScriptUrl)});
+  if (window[SESSION_KEY] !== SESSION_TOKEN) {
+    return;
+  }
+  if (window.__spriteForgePhotoEditorPatched && window[PATCHED_TOKEN_KEY] === SESSION_TOKEN) {
     return;
   }
 
   window.__spriteForgePhotoEditorPatched = true;
+  window[PATCHED_TOKEN_KEY] = SESSION_TOKEN;
   window[MODULE_KEY] = mod;
   ensureNotificationPatch(getStore(), mod);
   ensureFileInputBridge();
@@ -1604,6 +1668,7 @@ const ensurePatched = async () => {
     ensureToolButton();
     ensureCropToolButton();
     const store = getStore();
+    suppressNewLayerModalIfNeeded(store, mod);
     const activeDocument = store && store.getters ? store.getters.activeDocument : null;
     const cropState = getCropState();
     if (isCropToolActive() && activeDocument && cropState) {
@@ -2081,6 +2146,8 @@ const ensurePatched = async () => {
     }
     clearFloatingSelectionState();
     clearCropState();
+    clearScheduledAltRefresh();
+    setAltReleaseAt(0);
     setToolActive(false);
     setCropToolActive(false);
     window.__spriteForgeSuppressCutMoveNotification = false;
@@ -2118,6 +2185,7 @@ const ensurePatched = async () => {
     }
     window[MODULE_KEY] = null;
     window.__spriteForgePhotoEditorPatched = false;
+    window[PATCHED_TOKEN_KEY] = null;
     window.__spriteForgePhotoEditorCleanup = null;
   };
 };
@@ -2155,6 +2223,7 @@ export function PhotoEditorPanel(): JSX.Element {
     }
 
     const host = hostRef.current;
+    const sessionToken = `photo-editor-${editorKey}-${Date.now()}`;
     const previousMount = host.querySelector<HTMLElement>("#app");
     const previousVueApp = previousMount && "__vue_app__" in previousMount
       ? (previousMount as HTMLElement & { __vue_app__?: { unmount?: () => void } }).__vue_app__
@@ -2166,12 +2235,16 @@ export function PhotoEditorPanel(): JSX.Element {
     const spriteWindow = window as Window & {
       __spriteForgePhotoEditorCleanup?: (() => void) | null;
       __spriteForgePhotoEditorPatched?: boolean;
+      __spriteForgePhotoEditorSessionToken?: string | null;
+      __spriteForgePhotoEditorPatchedToken?: string | null;
     };
 
     if (typeof spriteWindow.__spriteForgePhotoEditorCleanup === "function") {
       spriteWindow.__spriteForgePhotoEditorCleanup();
     }
     spriteWindow.__spriteForgePhotoEditorPatched = false;
+    spriteWindow.__spriteForgePhotoEditorPatchedToken = null;
+    spriteWindow.__spriteForgePhotoEditorSessionToken = sessionToken;
 
     host.replaceChildren();
 
@@ -2191,7 +2264,7 @@ export function PhotoEditorPanel(): JSX.Element {
 
     const script = document.createElement("script");
     script.type = "module";
-    script.textContent = buildSelectionNudgePatch(mainScriptUrl, `#${PHOTO_EDITOR_HOST_ID}`);
+    script.textContent = buildSelectionNudgePatch(mainScriptUrl, `#${PHOTO_EDITOR_HOST_ID}`, sessionToken);
     host.appendChild(script);
 
     return () => {
@@ -2206,6 +2279,10 @@ export function PhotoEditorPanel(): JSX.Element {
         spriteWindow.__spriteForgePhotoEditorCleanup();
       }
       spriteWindow.__spriteForgePhotoEditorPatched = false;
+      spriteWindow.__spriteForgePhotoEditorPatchedToken = null;
+      if (spriteWindow.__spriteForgePhotoEditorSessionToken === sessionToken) {
+        spriteWindow.__spriteForgePhotoEditorSessionToken = null;
+      }
       script.remove();
       host.replaceChildren();
     };
@@ -2225,7 +2302,7 @@ export function PhotoEditorPanel(): JSX.Element {
         </div>
       </div>
 
-      <div ref={hostRef} id={PHOTO_EDITOR_HOST_ID} className="photo-editor-shell" aria-label={t("photo_editor_title")} />
+      <div key={editorKey} ref={hostRef} id={PHOTO_EDITOR_HOST_ID} className="photo-editor-shell" aria-label={t("photo_editor_title")} />
     </section>
   );
 }

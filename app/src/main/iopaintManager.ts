@@ -52,6 +52,13 @@ export interface IOPaintModelInfo {
   need_prompt: boolean;
 }
 
+export interface IOPaintDiagnosticResult {
+  ok: boolean;
+  summary: string;
+  details: string[];
+  status: IOPaintStatus;
+}
+
 interface IOPaintRuntimePaths {
   runtimeRoot: string;
   repoDir: string;
@@ -472,6 +479,9 @@ async function waitForServiceReady(timeoutMs: number): Promise<boolean> {
     if (await httpReachable(currentUrl)) {
       return true;
     }
+    if (!serviceProcess || serviceProcess.exitCode !== null || serviceProcess.killed) {
+      return false;
+    }
     await wait(2000);
   }
   return false;
@@ -538,14 +548,17 @@ async function startManagedService(): Promise<void> {
   });
   serviceProcess.on("close", (code) => {
     const wasReady = currentStatus.phase === "ready";
+    const failedDuringStartup = !wasReady;
     serviceProcess = null;
     setStatus({
-      phase: wasReady ? "error" : currentStatus.phase,
-      message: wasReady ? "IOPaint 서버가 종료되었습니다." : currentStatus.message,
+      phase: "error",
+      message: wasReady ? "IOPaint 서버가 종료되었습니다." : "IOPaint 서버가 시작 중 종료되었습니다.",
       installed: detectInstalledSync(),
       ready: false,
       managed: false,
-      error: wasReady ? `IOPaint exited with code ${code ?? "unknown"}` : currentStatus.error
+      error: failedDuringStartup
+        ? `IOPaint exited before ready with code ${code ?? "unknown"}`
+        : `IOPaint exited with code ${code ?? "unknown"}`
     });
   });
 
@@ -695,6 +708,88 @@ export async function restartIOPaint(): Promise<IOPaintStatus> {
   });
 
   return await ensureIOPaintReady();
+}
+
+export async function diagnoseIOPaint(): Promise<IOPaintDiagnosticResult> {
+  const { installStamp, packageWebAppDir, repoWebAppDir, repoWebAppDistDir, pythonExe } = getRuntimePaths();
+  const details: string[] = [];
+  const installed = detectInstalledSync();
+
+  details.push(installed ? "설치 파일: 확인됨" : "설치 파일: 누락됨");
+  details.push(await fs.pathExists(installStamp) ? "설치 스탬프: 확인됨" : "설치 스탬프: 없음");
+  details.push(await fs.pathExists(pythonExe) ? `Python 실행 파일: ${pythonExe}` : "Python 실행 파일: 없음");
+  details.push(
+    await webAppDirectoryLooksBuilt(packageWebAppDir)
+      ? `웹 자산: package 경로 사용`
+      : await webAppDirectoryLooksBuilt(repoWebAppDir)
+        ? "웹 자산: repo 경로 사용"
+        : await webAppDirectoryLooksBuilt(repoWebAppDistDir)
+          ? "웹 자산: dist 경로 사용"
+          : "웹 자산: 없음"
+  );
+
+  if (await fs.pathExists(pythonExe)) {
+    const importReady = await canRunCommand(pythonExe, ["-c", "import iopaint; print('OK')"]);
+    details.push(importReady ? "Python 패키지 import: 성공" : "Python 패키지 import: 실패");
+  }
+
+  const serviceReachable = await httpReachable(currentUrl);
+  details.push(serviceReachable ? `서버 응답: ${currentUrl}` : `서버 응답 없음: ${currentUrl}`);
+
+  const ok = installed && serviceReachable;
+  const summary = ok
+    ? "IOPaint 상태가 정상입니다."
+    : serviceReachable
+      ? "IOPaint 서버는 응답하지만 설치 상태에 문제가 있습니다."
+      : "IOPaint 서버 응답이 없거나 실행에 실패했습니다.";
+
+  for (const detail of details) {
+    appendLog(`[diagnose] ${detail}`);
+  }
+
+  setStatus({
+    phase: ok ? currentStatus.phase : "error",
+    message: summary,
+    ready: serviceReachable,
+    managed: currentStatus.managed,
+    error: ok ? null : details.join(" | ")
+  });
+
+  return {
+    ok,
+    summary,
+    details,
+    status: currentStatus
+  };
+}
+
+export async function reinstallIOPaint(): Promise<IOPaintStatus> {
+  const { runtimeRoot } = getRuntimePaths();
+
+  if (serviceProcess) {
+    const process = serviceProcess;
+    serviceProcess = null;
+    process.kill();
+    await waitForExit(process);
+  }
+
+  installPromise = null;
+  startPromise = null;
+
+  setStatus({
+    phase: "checking",
+    message: "IOPaint 재설치를 준비하는 중...",
+    installed: false,
+    ready: false,
+    managed: false,
+    error: null
+  });
+
+  if (await fs.pathExists(runtimeRoot)) {
+    await fs.remove(runtimeRoot);
+  }
+
+  return await ensureIOPaintInstalled();
 }
 
 export async function getIOPaintServerConfig(): Promise<IOPaintServerConfig> {

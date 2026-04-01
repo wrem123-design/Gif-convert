@@ -1,9 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { IOPaintStatus } from "./iopaintManager";
+import type { IOPaintDiagnosticResult, IOPaintStatus } from "./iopaintManager";
 import type {
   MarkRemoverPreviewOptions,
   MarkRemoverPreviewResult,
   MarkRemoverRunOptions,
+  MarkRemoverRunResult,
   MarkRemoverStatus
 } from "./markRemoverManager";
 
@@ -20,11 +21,15 @@ const api = {
   pickSpriteMapSavePath: (defaultName: string): Promise<string | null> => ipcRenderer.invoke("dialog:pickSpriteMapSavePath", defaultName),
   pickLeshyAnimationSavePath: (defaultName: string): Promise<string | null> =>
     ipcRenderer.invoke("dialog:pickLeshyAnimationSavePath", defaultName),
+  pickMarkRemoverSavePath: (defaultName: string): Promise<string | null> =>
+    ipcRenderer.invoke("dialog:pickMarkRemoverSavePath", defaultName),
   getDefaultProjectDir: (): Promise<string> => ipcRenderer.invoke("app:getDefaultProjectDir"),
   getIOPaintStatus: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:getStatus"),
   ensureIOPaintInstalled: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:ensureInstalled"),
   ensureIOPaintStarted: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:ensureStarted"),
   restartIOPaint: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:restart"),
+  diagnoseIOPaint: (): Promise<IOPaintDiagnosticResult> => ipcRenderer.invoke("iopaint:diagnose"),
+  reinstallIOPaint: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:reinstall"),
   getIOPaintServerConfig: (): Promise<unknown> => ipcRenderer.invoke("iopaint:getServerConfig"),
   getCurrentIOPaintModel: (): Promise<unknown> => ipcRenderer.invoke("iopaint:getCurrentModel"),
   switchIOPaintModel: (name: string): Promise<unknown> => ipcRenderer.invoke("iopaint:switchModel", name),
@@ -44,7 +49,7 @@ const api = {
   ensureMarkRemoverInstalled: (): Promise<MarkRemoverStatus> => ipcRenderer.invoke("markremover:ensureInstalled"),
   previewMarkRemover: (payload: MarkRemoverPreviewOptions): Promise<MarkRemoverPreviewResult> =>
     ipcRenderer.invoke("markremover:preview", payload),
-  runMarkRemover: (payload: MarkRemoverRunOptions): Promise<MarkRemoverStatus> =>
+  runMarkRemover: (payload: MarkRemoverRunOptions): Promise<MarkRemoverRunResult> =>
     ipcRenderer.invoke("markremover:run", payload),
   stopMarkRemover: (): Promise<MarkRemoverStatus> => ipcRenderer.invoke("markremover:stop"),
 

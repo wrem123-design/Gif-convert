@@ -5,11 +5,13 @@ import { Worker } from "node:worker_threads";
 import os from "node:os";
 import sharp from "sharp";
 import {
+  diagnoseIOPaint,
   ensureIOPaintInstalled,
   ensureIOPaintReady,
   getIOPaintStatus,
   getIOPaintServerConfig,
   getCurrentIOPaintModel,
+  reinstallIOPaint,
   restartIOPaint,
   runIOPaintInpaint,
   shutdownIOPaint,
@@ -376,6 +378,22 @@ async function pickLeshyAnimationSavePathDialog(win: BrowserWindow, defaultName:
   return result.canceled ? null : result.filePath ?? null;
 }
 
+async function pickMarkRemoverSavePathDialog(win: BrowserWindow, defaultName: string): Promise<string | null> {
+  const result = await dialog.showSaveDialog(win, {
+    title: "Save Cleaned Image",
+    defaultPath: defaultName,
+    filters: [
+      { name: "PNG Image", extensions: ["png"] },
+      { name: "JPEG Image", extensions: ["jpg", "jpeg"] },
+      { name: "WEBP Image", extensions: ["webp"] },
+      { name: "Bitmap Image", extensions: ["bmp"] },
+      { name: "TIFF Image", extensions: ["tif", "tiff"] },
+      { name: "All Files", extensions: ["*"] }
+    ]
+  });
+  return result.canceled ? null : result.filePath ?? null;
+}
+
 function inferImageMime(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
@@ -522,6 +540,10 @@ app.whenReady().then(async () => {
     return await pickLeshyAnimationSavePathDialog(win, defaultName);
   });
 
+  ipcMain.handle("dialog:pickMarkRemoverSavePath", async (_event, defaultName: string) => {
+    return await pickMarkRemoverSavePathDialog(win, defaultName);
+  });
+
   ipcMain.handle("project:load", async (_event, payload) => callWorker("project:load", payload));
   ipcMain.handle("project:save", async (_event, payload) => callWorker("project:save", payload));
   ipcMain.handle("project:import", async (_event, payload) => callWorker("project:import", payload));
@@ -584,6 +606,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("iopaint:ensureInstalled", async () => await ensureIOPaintInstalled());
   ipcMain.handle("iopaint:ensureStarted", async () => await ensureIOPaintReady());
   ipcMain.handle("iopaint:restart", async () => await restartIOPaint());
+  ipcMain.handle("iopaint:diagnose", async () => await diagnoseIOPaint());
+  ipcMain.handle("iopaint:reinstall", async () => await reinstallIOPaint());
   ipcMain.handle("iopaint:getServerConfig", async () => await getIOPaintServerConfig());
   ipcMain.handle("iopaint:getCurrentModel", async () => await getCurrentIOPaintModel());
   ipcMain.handle("iopaint:switchModel", async (_event, name: string) => await switchIOPaintModel(name));

@@ -258,14 +258,14 @@ export function App(): JSX.Element {
     setActiveHelpTopic(null);
   };
 
-  const tabItems: Array<{ id: AppTab; label: string; icon: JSX.Element; tone: "project" | "tool" }> = [
-    { id: "sprite", label: t("tab_sprite"), icon: <IconGrid />, tone: "project" },
-    { id: "pixel", label: t("tab_pixel"), icon: <IconPen />, tone: "project" },
-    { id: "bg_remove", label: t("tab_bg_remove"), icon: <IconCut />, tone: "tool" },
-    { id: "pixel_helper", label: t("tab_pixel_helper"), icon: <IconWand />, tone: "tool" },
-    { id: "leshy_sprite", label: t("tab_leshy_sprite"), icon: <IconMap />, tone: "tool" },
-    { id: "photo_editor", label: t("tab_photo_editor"), icon: <IconImage />, tone: "tool" },
-    { id: "iopaint", label: t("tab_iopaint"), icon: <IconSparkles />, tone: "tool" }
+  const tabItems: Array<{ id: AppTab; label: string; icon: JSX.Element }> = [
+    { id: "sprite", label: t("tab_sprite"), icon: <IconGrid /> },
+    { id: "pixel", label: t("tab_pixel"), icon: <IconPen /> },
+    { id: "bg_remove", label: t("tab_bg_remove"), icon: <IconCut /> },
+    { id: "pixel_helper", label: t("tab_pixel_helper"), icon: <IconWand /> },
+    { id: "leshy_sprite", label: t("tab_leshy_sprite"), icon: <IconMap /> },
+    { id: "photo_editor", label: t("tab_photo_editor"), icon: <IconImage /> },
+    { id: "iopaint", label: t("tab_iopaint"), icon: <IconSparkles /> }
   ];
 
   return (
@@ -295,23 +295,8 @@ export function App(): JSX.Element {
           </div>
 
           <div className="tab-bar-wrap">
-            <div className="tab-bar-group-label">{t("toolbar_group_project")}</div>
             <div className="tab-bar">
-              {tabItems.filter((item) => item.tone === "project").map((item) => (
-                <button
-                  key={item.id}
-                  className={tab === item.id ? "active" : ""}
-                  onClick={() => changeTab(item.id)}
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </div>
-            <div className="tab-bar-divider" />
-            <div className="tab-bar-group-label">{t("toolbar_group_tools")}</div>
-            <div className="tab-bar tab-bar-tools">
-              {tabItems.filter((item) => item.tone === "tool").map((item) => (
+              {tabItems.map((item) => (
                 <button
                   key={item.id}
                   className={tab === item.id ? "active" : ""}
@@ -427,7 +412,7 @@ export function App(): JSX.Element {
         ) : null}
         {shouldRenderPersistentToolPanel("iopaint") ? (
           <div className={`persistent-tool-panel${tab === "iopaint" ? " is-active" : ""}`} aria-hidden={tab !== "iopaint"}>
-            <IOPaintPanel />
+            <IOPaintPanel onOpenSettings={() => setSettingsOpen(true)} />
           </div>
         ) : null}
       </div>
@@ -441,7 +426,7 @@ export function App(): JSX.Element {
       {/* ── Settings Modal ── */}
       {settingsOpen ? (
         <div className="settings-overlay" onClick={() => setSettingsOpen(false)}>
-          <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="settings-modal settings-modal-wide" onClick={(e) => e.stopPropagation()}>
             <div className="settings-modal-header">
               <h3>{t("settings")}</h3>
               <button className="ghost" onClick={() => setSettingsOpen(false)}>
@@ -495,7 +480,12 @@ export function App(): JSX.Element {
               {/* App Info */}
               <div className="settings-section">
                 <span className="settings-section-title">정보</span>
-                <p className="settings-info">Sprite Studio v1.0.2</p>
+                <p className="settings-info">Sprite Studio v1.0.3</p>
+              </div>
+
+              <div className="settings-section">
+                <span className="settings-section-title">AI 도구</span>
+                <IOPaintPanel runtimeSettingsOnly />
               </div>
             </div>
 

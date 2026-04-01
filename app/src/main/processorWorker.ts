@@ -938,10 +938,10 @@ async function handleExportLeshyAnimation(payload: {
 
 function pickOutputName(inputPath: string, usedNames: Set<string>): string {
   const base = path.parse(inputPath).name;
-  let name = `${base}.png`;
+  let name = `${base}_bgremove.png`;
   let i = 2;
   while (usedNames.has(name.toLowerCase())) {
-    name = `${base}_${i}.png`;
+    name = `${base}_bgremove_${i}.png`;
     i += 1;
   }
   usedNames.add(name.toLowerCase());

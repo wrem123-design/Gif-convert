@@ -7,6 +7,8 @@ type IOPaintServerConfig = Awaited<ReturnType<SpriteForgeApi["getIOPaintServerCo
 type IOPaintModelInfo = Awaited<ReturnType<SpriteForgeApi["getCurrentIOPaintModel"]>>;
 type MarkRemoverStatus = Awaited<ReturnType<SpriteForgeApi["getMarkRemoverStatus"]>>;
 type MarkRemoverPreview = Awaited<ReturnType<SpriteForgeApi["previewMarkRemover"]>>;
+type MarkRemoverRunResult = Awaited<ReturnType<SpriteForgeApi["runMarkRemover"]>>;
+type IOPaintDiagnosticResult = Awaited<ReturnType<SpriteForgeApi["diagnoseIOPaint"]>>;
 type ToolMode = "iopaint" | "markremover";
 type IOPaintViewMode = "native" | "full";
 type ForceFormat = "PNG" | "WEBP" | "JPG" | "MP4" | "AVI" | "";
@@ -187,6 +189,33 @@ function getBaseName(value: string): string {
   return index >= 0 ? normalized.slice(index + 1) : normalized;
 }
 
+function getFileExtension(value: string): string {
+  const baseName = getBaseName(value);
+  const index = baseName.lastIndexOf(".");
+  return index > 0 ? baseName.slice(index).toLowerCase() : "";
+}
+
+function getFileNameWithoutExtension(value: string): string {
+  const baseName = getBaseName(value);
+  const index = baseName.lastIndexOf(".");
+  return index > 0 ? baseName.slice(0, index) : baseName;
+}
+
+function isStillImagePath(value: string): boolean {
+  return [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"].includes(getFileExtension(value));
+}
+
+function normalizeImageExtension(forceFormat: ForceFormat, sourcePath: string): string {
+  if (forceFormat === "PNG") return ".png";
+  if (forceFormat === "JPG") return ".jpg";
+  if (forceFormat === "WEBP") return ".webp";
+  return isStillImagePath(sourcePath) ? getFileExtension(sourcePath) || ".png" : ".png";
+}
+
+function buildMarkRemoverSaveName(sourcePath: string, forceFormat: ForceFormat): string {
+  return `${getFileNameWithoutExtension(sourcePath) || "cleaned-image"}-clean${normalizeImageExtension(forceFormat, sourcePath)}`;
+}
+
 function loadImageElement(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -206,7 +235,12 @@ function getCanvasPoint(canvas: HTMLCanvasElement, clientX: number, clientY: num
   };
 }
 
-export function IOPaintPanel(): JSX.Element {
+interface IOPaintPanelProps {
+  runtimeSettingsOnly?: boolean;
+  onOpenSettings?: () => void;
+}
+
+export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IOPaintPanelProps): JSX.Element {
   const { t } = useI18n();
   const initialPrefs = useMemo(() => loadAiEditorPrefs(), []);
   const initialNativePrefs = useMemo(() => loadNativeIOPaintPrefs(), []);
@@ -227,6 +261,8 @@ export function IOPaintPanel(): JSX.Element {
   const [nativeBusy, setNativeBusy] = useState(false);
   const [nativeError, setNativeError] = useState<string | null>(null);
   const [nativeSeed, setNativeSeed] = useState<string | null>(null);
+  const [iopaintDiagSummary, setIopaintDiagSummary] = useState("");
+  const [iopaintDiagDetails, setIopaintDiagDetails] = useState<string[]>([]);
   const [nativeMaskDirty, setNativeMaskDirty] = useState(false);
   const [nativeEraseMode, setNativeEraseMode] = useState(false);
   const [inputPath, setInputPath] = useState(initialPrefs.inputPath);
@@ -235,12 +271,14 @@ export function IOPaintPanel(): JSX.Element {
   const [detectionPrompt, setDetectionPrompt] = useState(initialPrefs.detectionPrompt);
   const [maxBBoxPercent, setMaxBBoxPercent] = useState(initialPrefs.maxBBoxPercent);
   const [transparent, setTransparent] = useState(initialPrefs.transparent);
-  const [overwrite, setOverwrite] = useState(initialPrefs.overwrite);
+  const [overwrite] = useState(initialPrefs.overwrite);
   const [forceFormat, setForceFormat] = useState<ForceFormat>(initialPrefs.forceFormat);
   const [detectionSkip, setDetectionSkip] = useState(initialPrefs.detectionSkip);
   const [fadeIn, setFadeIn] = useState(initialPrefs.fadeIn);
   const [fadeOut, setFadeOut] = useState(initialPrefs.fadeOut);
   const [preview, setPreview] = useState<MarkRemoverPreview | null>(null);
+  const [resultPreviewDataUrl, setResultPreviewDataUrl] = useState("");
+  const [resultOutputPath, setResultOutputPath] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const frameShellRef = useRef<HTMLDivElement | null>(null);
@@ -312,11 +350,20 @@ export function IOPaintPanel(): JSX.Element {
   ]);
 
   useEffect(() => {
+    if (inputKind === "folder" && inputPath.trim()) {
+      setOutputPath(inputPath.trim());
+    }
+  }, [inputKind, inputPath]);
+
+  useEffect(() => {
     let mounted = true;
 
     void window.spriteForge.getIOPaintStatus().then((next) => {
       if (mounted) {
         setStatus(next);
+        if (!next.error && next.ready) {
+          setNativeError(null);
+        }
       }
     });
 
@@ -387,6 +434,8 @@ export function IOPaintPanel(): JSX.Element {
 
   useEffect(() => {
     setPreview(null);
+    setResultPreviewDataUrl("");
+    setResultOutputPath("");
     setActionError(null);
   }, [inputPath, detectionPrompt, maxBBoxPercent]);
 
@@ -618,6 +667,37 @@ export function IOPaintPanel(): JSX.Element {
     });
   };
 
+  const diagnoseIOPaint = (): void => {
+    setNativeError(null);
+    void window.spriteForge.diagnoseIOPaint().then((result: IOPaintDiagnosticResult) => {
+      setIopaintDiagSummary(result.summary);
+      setIopaintDiagDetails(result.details);
+      if (!result.ok) {
+        setNativeError(result.summary);
+      }
+    }).catch((error) => {
+      setNativeError(error instanceof Error ? error.message : String(error));
+    });
+  };
+
+  const restartIOPaintServer = (): void => {
+    setNativeError(null);
+    setIopaintDiagSummary("");
+    setIopaintDiagDetails([]);
+    void window.spriteForge.restartIOPaint().catch((error) => {
+      setNativeError(error instanceof Error ? error.message : String(error));
+    });
+  };
+
+  const reinstallIOPaintRuntime = (): void => {
+    setNativeError(null);
+    setIopaintDiagSummary("");
+    setIopaintDiagDetails([]);
+    void window.spriteForge.reinstallIOPaint().catch((error) => {
+      setNativeError(error instanceof Error ? error.message : String(error));
+    });
+  };
+
   const installAI = (): void => {
     void window.spriteForge.ensureMarkRemoverInstalled().catch(() => {
       // Shared status stream already carries the failure details.
@@ -639,6 +719,10 @@ export function IOPaintPanel(): JSX.Element {
     if (!nextInput) {
       return;
     }
+    setPreview(null);
+    setResultPreviewDataUrl("");
+    setResultOutputPath("");
+    setActionError(null);
     setInputKind("file");
     setInputPath(nextInput);
   };
@@ -649,15 +733,13 @@ export function IOPaintPanel(): JSX.Element {
     if (!nextInput) {
       return;
     }
+    setPreview(null);
+    setResultPreviewDataUrl("");
+    setResultOutputPath("");
+    setActionError(null);
     setInputKind("folder");
     setInputPath(nextInput);
-  };
-
-  const pickOutputFolder = async (): Promise<void> => {
-    const nextOutput = await window.spriteForge.pickBgRemoveOutputDir();
-    if (nextOutput) {
-      setOutputPath(nextOutput);
-    }
+    setOutputPath(nextInput);
   };
 
   const runPreview = (): void => {
@@ -667,6 +749,8 @@ export function IOPaintPanel(): JSX.Element {
       return;
     }
 
+    setResultPreviewDataUrl("");
+    setResultOutputPath("");
     setActionError(null);
     void window.spriteForge.previewMarkRemover({
       inputPath: normalizedInput,
@@ -680,23 +764,38 @@ export function IOPaintPanel(): JSX.Element {
     });
   };
 
+  const loadRemovalPreview = async (runResult: MarkRemoverRunResult): Promise<void> => {
+    const finalOutputPath = runResult.outputPath?.trim() ?? "";
+    setResultOutputPath(finalOutputPath);
+    if (!finalOutputPath || !isStillImagePath(finalOutputPath)) {
+      return;
+    }
+
+    const dataUrl = await window.spriteForge.readImageDataUrl(finalOutputPath);
+    setPreview(null);
+    setResultPreviewDataUrl(dataUrl);
+  };
+
   const runRemoval = (): void => {
     const normalizedInput = inputPath.trim();
-    const normalizedOutput = outputPath.trim();
     if (!normalizedInput) {
       setActionError(t("markremover_select_input_first"));
       return;
     }
-    if (!normalizedOutput) {
+    const isBatchMode = inputKind === "folder";
+    const normalizedOutput = outputPath.trim();
+    if (isBatchMode && !normalizedOutput) {
       setActionError(t("markremover_select_output_first"));
       return;
     }
 
     setActionError(null);
+    setResultPreviewDataUrl("");
+    setResultOutputPath("");
     void window.spriteForge.runMarkRemover({
       inputPath: normalizedInput,
-      outputPath: normalizedOutput,
-      overwrite,
+      outputPath: isBatchMode ? normalizedOutput : "",
+      overwrite: false,
       transparent,
       maxBBoxPercent: Number.parseFloat(maxBBoxPercent) || 10,
       forceFormat: forceFormat || null,
@@ -704,11 +803,35 @@ export function IOPaintPanel(): JSX.Element {
       detectionSkip: Math.max(1, Math.min(10, Number.parseInt(detectionSkip, 10) || 1)),
       fadeIn: Math.max(0, Number.parseFloat(fadeIn) || 0),
       fadeOut: Math.max(0, Number.parseFloat(fadeOut) || 0)
-    }).then(() => {
+    }).then(async (result) => {
+      if (!isBatchMode) {
+        await loadRemovalPreview(result);
+      } else {
+        setResultOutputPath(result.outputPath ?? "");
+      }
       setActionError(null);
     }).catch((error) => {
       setActionError(error instanceof Error ? error.message : String(error));
     });
+  };
+
+  const saveRemovalResult = async (): Promise<void> => {
+    if (!resultPreviewDataUrl) {
+      return;
+    }
+
+    const sourcePath = resultOutputPath || inputPath.trim();
+    const savePath = await window.spriteForge.pickMarkRemoverSavePath(buildMarkRemoverSaveName(sourcePath, forceFormat));
+    if (!savePath) {
+      return;
+    }
+
+    await window.spriteForge.writeImageDataUrl({
+      filePath: savePath,
+      dataUrl: resultPreviewDataUrl
+    });
+    setResultOutputPath(savePath);
+    setActionError(null);
   };
 
   const stopRemoval = (): void => {
@@ -820,10 +943,105 @@ export function IOPaintPanel(): JSX.Element {
   const isInstallingAnything = isBusy(status.phase) || isBusy(aiStatus.phase);
   const setupNeeded = !status.installed || !aiStatus.installed;
   const aiWorking = isBusy(aiStatus.phase) || aiStatus.taskState !== "idle";
+  const hasRemovalResult = Boolean(resultPreviewDataUrl);
   const acceptedDetections = useMemo(
     () => preview?.detections.filter((item) => item.accepted).length ?? 0,
     [preview]
   );
+  const renderSetupButton = () => onOpenSettings ? (
+    <button type="button" className="accent" onClick={onOpenSettings}>
+      {t("ai_tools_open_settings")}
+    </button>
+  ) : null;
+  const runtimeLogText = [...status.logs, ...aiStatus.logs].length
+    ? [...status.logs, ...aiStatus.logs].join("\n")
+    : (status.error || aiStatus.error || t("iopaint_log_empty"));
+  const renderRuntimeManagement = () => (
+    <>
+      <div className="iopaint-setup-card">
+        <div className="iopaint-setup-copy">
+          <span className="iopaint-status-badge">{setupNeeded ? t("tool_first_run_badge") : t("settings")}</span>
+          <strong>{runtimeSettingsOnly ? t("ai_tools_settings_title") : t("tool_first_run_title")}</strong>
+          <p className="muted">{runtimeSettingsOnly ? t("ai_tools_settings_desc") : t("tool_first_run_desc")}</p>
+        </div>
+
+        <div className="iopaint-setup-grid">
+          <div className="iopaint-setup-item">
+            <div className="iopaint-setup-item-head">
+              <strong>{t("iopaint_mode_builtin")}</strong>
+              <span className={`iopaint-chip ${status.installed ? "done" : ""}`}>
+                {status.installed ? t("tool_install_done") : t("tool_install_pending")}
+              </span>
+            </div>
+            <p className="muted">{status.error ?? status.message}</p>
+            <div className="row-buttons">
+              {!status.installed ? (
+                <button type="button" onClick={installIOPaint} disabled={isInstallingAnything}>
+                  {t("tool_install_iopaint")}
+                </button>
+              ) : null}
+              <button type="button" onClick={diagnoseIOPaint} disabled={isBusy(status.phase)}>
+                {t("iopaint_diagnose")}
+              </button>
+              <button type="button" onClick={restartIOPaintServer} disabled={isBusy(status.phase) || !status.installed}>
+                {t("iopaint_restart_server")}
+              </button>
+              <button type="button" onClick={reinstallIOPaintRuntime} disabled={isBusy(status.phase)}>
+                {t("iopaint_reinstall")}
+              </button>
+            </div>
+            {iopaintDiagSummary ? <p className="muted">{iopaintDiagSummary}</p> : null}
+            {iopaintDiagDetails.length ? (
+              <pre className="iopaint-log-output iopaint-inline-diagnostics">{iopaintDiagDetails.join("\n")}</pre>
+            ) : null}
+          </div>
+
+          <div className="iopaint-setup-item">
+            <div className="iopaint-setup-item-head">
+              <strong>{t("iopaint_mode_ai")}</strong>
+              <span className={`iopaint-chip ${aiStatus.installed ? "done" : ""}`}>
+                {aiStatus.installed ? t("tool_install_done") : t("tool_install_pending")}
+              </span>
+            </div>
+            <p className="muted">{aiStatus.error ?? aiStatus.message}</p>
+            {!aiStatus.installed ? (
+              <button type="button" onClick={installAI} disabled={isInstallingAnything}>
+                {t("tool_install_ai")}
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {!status.installed && !aiStatus.installed ? (
+          <div className="row-buttons">
+            <button type="button" className="accent" onClick={installBoth} disabled={isInstallingAnything}>
+              {t("tool_install_all")}
+            </button>
+          </div>
+        ) : null}
+
+        {isInstallingAnything || status.error || aiStatus.error || status.logs.length || aiStatus.logs.length ? (
+          <div className="iopaint-log-card">
+            <div className="iopaint-log-header">
+              <strong>{t("iopaint_log_title")}</strong>
+              {t("iopaint_log_desc") ? <span className="muted">{t("iopaint_log_desc")}</span> : null}
+            </div>
+            <pre className="iopaint-log-output">
+              {runtimeLogText}
+            </pre>
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+
+  if (runtimeSettingsOnly) {
+    return (
+      <div className="settings-ai-runtime">
+        {renderRuntimeManagement()}
+      </div>
+    );
+  }
 
   return (
     <section className="panel iopaint-page">
@@ -833,6 +1051,7 @@ export function IOPaintPanel(): JSX.Element {
           {t("iopaint_desc") ? <p className="muted">{t("iopaint_desc")}</p> : null}
         </div>
         <div className="row-buttons iopaint-mode-toggle">
+          {setupNeeded || status.error || aiStatus.error ? renderSetupButton() : null}
           <button type="button" className={mode === "iopaint" ? "active" : ""} onClick={() => setMode("iopaint")}>
             {t("iopaint_mode_builtin")}
           </button>
@@ -842,82 +1061,8 @@ export function IOPaintPanel(): JSX.Element {
         </div>
       </div>
 
-      {setupNeeded ? (
-        <div className="iopaint-setup-card">
-          <div className="iopaint-setup-copy">
-            <span className="iopaint-status-badge">{t("tool_first_run_badge")}</span>
-            <strong>{t("tool_first_run_title")}</strong>
-            <p className="muted">{t("tool_first_run_desc")}</p>
-          </div>
-
-          <div className="iopaint-setup-grid">
-            <div className="iopaint-setup-item">
-              <div className="iopaint-setup-item-head">
-                <strong>{t("iopaint_mode_builtin")}</strong>
-                <span className={`iopaint-chip ${status.installed ? "done" : ""}`}>
-                  {status.installed ? t("tool_install_done") : t("tool_install_pending")}
-                </span>
-              </div>
-              <p className="muted">{status.error ?? status.message}</p>
-              {!status.installed ? (
-                <button type="button" onClick={installIOPaint} disabled={isInstallingAnything}>
-                  {t("tool_install_iopaint")}
-                </button>
-              ) : null}
-            </div>
-
-            <div className="iopaint-setup-item">
-              <div className="iopaint-setup-item-head">
-                <strong>{t("iopaint_mode_ai")}</strong>
-                <span className={`iopaint-chip ${aiStatus.installed ? "done" : ""}`}>
-                  {aiStatus.installed ? t("tool_install_done") : t("tool_install_pending")}
-                </span>
-              </div>
-              <p className="muted">{aiStatus.error ?? aiStatus.message}</p>
-              {!aiStatus.installed ? (
-                <button type="button" onClick={installAI} disabled={isInstallingAnything}>
-                  {t("tool_install_ai")}
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          {!status.installed && !aiStatus.installed ? (
-            <div className="row-buttons">
-              <button type="button" className="accent" onClick={installBoth} disabled={isInstallingAnything}>
-                {t("tool_install_all")}
-              </button>
-            </div>
-          ) : null}
-
-          {isInstallingAnything || status.error || aiStatus.error ? (
-            <div className="iopaint-log-card">
-              <div className="iopaint-log-header">
-                <strong>{t("iopaint_log_title")}</strong>
-                {t("iopaint_log_desc") ? <span className="muted">{t("iopaint_log_desc")}</span> : null}
-              </div>
-              <pre className="iopaint-log-output">
-                {[...status.logs, ...aiStatus.logs].length ? [...status.logs, ...aiStatus.logs].join("\n") : t("iopaint_log_empty")}
-              </pre>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
       {mode === "iopaint" ? (
         <>
-          <div className="iopaint-status-card compact">
-            <div className="iopaint-status-copy">
-              <span className={`iopaint-status-badge ${status.ready ? "phase-ready" : ""}`}>
-                {status.ready ? t("iopaint_status_ready") : t("iopaint_status_setting")}
-              </span>
-              <strong>{status.message}</strong>
-              <p className={`muted ${status.error ? "iopaint-status-error" : ""}`}>
-                {status.error ?? (status.installed ? t("iopaint_status_desc") : t("iopaint_waiting_setup_desc"))}
-              </p>
-            </div>
-          </div>
-
           <div className="row-buttons iopaint-view-toggle">
             <button type="button" className={iopaintViewMode === "native" ? "active" : ""} onClick={() => setIopaintViewMode("native")}>
               {t("iopaint_native_mode")}
@@ -933,10 +1078,19 @@ export function IOPaintPanel(): JSX.Element {
                 <div className="iopaint-empty-state">
                   <strong>{t("iopaint_waiting_setup")}</strong>
                   <p className="muted">{t("iopaint_waiting_setup_desc")}</p>
+                  <p className="muted">{t("ai_tools_go_settings_hint")}</p>
+                  {onOpenSettings ? <div className="row-buttons">{renderSetupButton()}</div> : null}
+                </div>
+              ) : status.error ? (
+                <div className="iopaint-empty-state">
+                  <strong>{t("iopaint_status_failed")}</strong>
+                  <p className="muted">{status.error}</p>
+                  <p className="muted">{t("ai_tools_go_settings_hint")}</p>
+                  {onOpenSettings ? <div className="row-buttons">{renderSetupButton()}</div> : null}
                 </div>
               ) : !status.ready ? (
                 <div className="iopaint-frame-status">
-                  <strong>{t("iopaint_connecting")}</strong>
+                  <strong>{status.message || t("iopaint_connecting")}</strong>
                 </div>
               ) : (
                 <>
@@ -1040,12 +1194,21 @@ export function IOPaintPanel(): JSX.Element {
                 <div className="iopaint-empty-state">
                   <strong>{t("iopaint_waiting_setup")}</strong>
                   <p className="muted">{t("iopaint_waiting_setup_desc")}</p>
+                  <p className="muted">{t("ai_tools_go_settings_hint")}</p>
+                  {onOpenSettings ? <div className="row-buttons">{renderSetupButton()}</div> : null}
                 </div>
               ) : (
                 <>
-                  {!status.ready || !frameLoaded ? (
+                  {status.error ? (
                     <div className="iopaint-frame-status">
-                      <strong>{status.ready ? t("iopaint_loading_frame") : t("iopaint_connecting")}</strong>
+                      <strong>{t("iopaint_status_failed")}</strong>
+                      <p className="muted">{status.error}</p>
+                      <p className="muted">{t("ai_tools_go_settings_hint")}</p>
+                      {onOpenSettings ? <div className="row-buttons">{renderSetupButton()}</div> : null}
+                    </div>
+                  ) : !status.ready || !frameLoaded ? (
+                    <div className="iopaint-frame-status">
+                      <strong>{status.ready ? t("iopaint_loading_frame") : (status.message || t("iopaint_connecting"))}</strong>
                     </div>
                   ) : null}
                   {frameUrl ? (
@@ -1073,6 +1236,8 @@ export function IOPaintPanel(): JSX.Element {
             <div className="iopaint-empty-state">
               <strong>{t("markremover_waiting_setup")}</strong>
               <p className="muted">{t("markremover_waiting_setup_desc")}</p>
+              <p className="muted">{t("ai_tools_go_settings_hint")}</p>
+              {onOpenSettings ? <div className="row-buttons">{renderSetupButton()}</div> : null}
             </div>
           ) : (
             <div className="markremover-layout">
@@ -1092,9 +1257,6 @@ export function IOPaintPanel(): JSX.Element {
                     <button type="button" onClick={() => void pickInputFolder()} disabled={aiWorking}>
                       {t("markremover_pick_folder")}
                     </button>
-                    <button type="button" onClick={() => void pickOutputFolder()} disabled={aiWorking}>
-                      {t("markremover_pick_output")}
-                    </button>
                   </div>
 
                   <label>
@@ -1105,10 +1267,6 @@ export function IOPaintPanel(): JSX.Element {
                       onChange={(event) => setInputPath(event.target.value)}
                       placeholder="C:\\"
                     />
-                  </label>
-                  <label>
-                    <span>{t("markremover_output")}</span>
-                    <input type="text" value={outputPath} onChange={(event) => setOutputPath(event.target.value)} placeholder="C:\\" />
                   </label>
                 </div>
 
@@ -1155,10 +1313,6 @@ export function IOPaintPanel(): JSX.Element {
                     <input type="checkbox" checked={transparent} onChange={(event) => setTransparent(event.target.checked)} />
                     <span>{t("markremover_transparent")}</span>
                   </label>
-                  <label className="inline-check">
-                    <input type="checkbox" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} />
-                    <span>{t("markremover_overwrite")}</span>
-                  </label>
 
                   <div className="row-buttons markremover-action-row">
                     <button type="button" onClick={runPreview} disabled={aiWorking}>
@@ -1197,11 +1351,35 @@ export function IOPaintPanel(): JSX.Element {
               <div className="markremover-preview-pane">
                 <div className="markremover-card markremover-preview-card">
                   <div className="markremover-card-header">
-                    <strong>{t("markremover_preview")}</strong>
-                    {preview ? <span>{t("markremover_preview_ready")}</span> : null}
+                    <strong>{hasRemovalResult ? t("markremover_result_preview") : t("markremover_preview")}</strong>
+                    {hasRemovalResult || preview ? <span>{t("markremover_preview_ready")}</span> : null}
                   </div>
 
-                  {preview ? (
+                  {hasRemovalResult ? (
+                    <div className="markremover-preview-body">
+                      <div className="markremover-preview-image-wrap">
+                        <img className="markremover-preview-image" src={resultPreviewDataUrl} alt={t("markremover_result_preview")} />
+                      </div>
+                      <div className="markremover-preview-meta">
+                        <div className="markremover-stat-grid">
+                          <div className="markremover-stat-card">
+                            <span>{t("markremover_source")}</span>
+                            <strong title={inputPath}>{getBaseName(inputPath)}</strong>
+                          </div>
+                          <div className="markremover-stat-card">
+                            <span>{t("markremover_last_output")}</span>
+                            <strong title={resultOutputPath}>{getBaseName(resultOutputPath || inputPath)}</strong>
+                          </div>
+                        </div>
+                        <p className="muted">{t("markremover_result_hint")}</p>
+                        <div className="row-buttons">
+                          <button type="button" className="accent" onClick={() => void saveRemovalResult()} disabled={aiWorking || !resultPreviewDataUrl}>
+                            {t("markremover_save_result")}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : preview ? (
                     <div className="markremover-preview-body">
                       <div className="markremover-preview-image-wrap">
                         <img className="markremover-preview-image" src={preview.imageDataUrl} alt={t("markremover_preview")} />

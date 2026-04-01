@@ -346,7 +346,7 @@ button.large {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 0;
   padding: 0 10px;
 }
 
@@ -371,6 +371,7 @@ button.large {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  width: 100%;
 }
 
 .tab-bar button {
@@ -1731,6 +1732,10 @@ body.workspace-resizing {
 .iopaint-log-output.standalone {
   margin: 0;
   padding: 0;
+}
+
+.iopaint-inline-diagnostics {
+  max-height: 140px;
 }
 
 .iopaint-shell {
@@ -3242,6 +3247,10 @@ body.pixel-helper-resizing {
   overflow: hidden;
 }
 
+.settings-modal.settings-modal-wide {
+  width: min(960px, 94vw);
+}
+
 .settings-modal-header {
   display: flex;
   align-items: center;
@@ -3266,6 +3275,16 @@ body.pixel-helper-resizing {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.settings-ai-runtime {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-ai-runtime .iopaint-setup-card {
+  background: linear-gradient(180deg, rgba(91, 156, 246, 0.06), rgba(255, 255, 255, 0.02));
 }
 
 .settings-section-title {
