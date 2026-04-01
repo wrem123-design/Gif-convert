@@ -468,12 +468,25 @@ function wait(ms: number): Promise<void> {
 
 async function canRunCommand(command: string, args: string[]): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
+    let settled = false;
     const child = spawn(command, args, {
       shell: false,
       windowsHide: true
     });
-    child.on("error", () => resolve(false));
-    child.on("close", (code) => resolve(code === 0));
+    const finish = (result: boolean): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(false);
+    }, 8000);
+    child.on("error", () => finish(false));
+    child.on("close", (code) => finish(code === 0));
   });
 }
 
@@ -508,14 +521,19 @@ function psQuote(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function makePowerShellArgs(command: string): string[] {
+  return ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command];
+}
+
 async function ensurePrerequisites(needsClone: boolean): Promise<void> {
   const missing: string[] = [];
+  appendLog("AI 도구 사전 준비 항목을 확인합니다.");
 
   if (needsClone && !(await canRunCommand("git", ["--version"]))) {
     missing.push("Git for Windows 설치 후 `git --version` 확인");
   }
 
-  if (!(await canRunCommand("powershell", ["-Command", "$PSVersionTable.PSVersion.ToString()"]))) {
+  if (!(await canRunCommand("powershell", makePowerShellArgs("$PSVersionTable.PSVersion.ToString()")))) {
     missing.push("Windows PowerShell 사용 가능 상태 확인");
   }
 
@@ -567,13 +585,13 @@ async function ensureEmbeddedPython(): Promise<void> {
   appendLog(`Embedded Python ${EMBEDDED_PYTHON_VERSION} 다운로드를 시작합니다.`);
   await runCommand(
     "powershell",
-    ["-Command", `Invoke-WebRequest -Uri ${psQuote(pythonUrl)} -OutFile ${psQuote(zipPath)} -UseBasicParsing`],
+    makePowerShellArgs(`Invoke-WebRequest -Uri ${psQuote(pythonUrl)} -OutFile ${psQuote(zipPath)} -UseBasicParsing`),
     repoDir
   );
   await fs.ensureDir(pythonDir);
   await runCommand(
     "powershell",
-    ["-Command", `Expand-Archive -Path ${psQuote(zipPath)} -DestinationPath ${psQuote(pythonDir)} -Force`],
+    makePowerShellArgs(`Expand-Archive -Path ${psQuote(zipPath)} -DestinationPath ${psQuote(pythonDir)} -Force`),
     repoDir
   );
   await fs.remove(zipPath);
@@ -588,7 +606,7 @@ async function ensureEmbeddedPython(): Promise<void> {
   await fs.ensureDir(path.join(pythonDir, "Lib", "site-packages"));
   await runCommand(
     "powershell",
-    ["-Command", `Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile ${psQuote(getPipPath)} -UseBasicParsing`],
+    makePowerShellArgs(`Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile ${psQuote(getPipPath)} -UseBasicParsing`),
     repoDir
   );
   await runCommand(pythonExe, [getPipPath, "--no-warn-script-location"], repoDir);

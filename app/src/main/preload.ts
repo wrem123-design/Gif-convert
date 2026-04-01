@@ -11,6 +11,7 @@ const api = {
   pickProjectDir: (): Promise<string> => ipcRenderer.invoke("dialog:pickProjectDir"),
   pickImportPaths: (): Promise<string[]> => ipcRenderer.invoke("dialog:pickImportPaths"),
   pickMediaPaths: (): Promise<string[]> => ipcRenderer.invoke("dialog:pickMediaPaths"),
+  pickPhotoEditorPaths: (multiple = true): Promise<string[]> => ipcRenderer.invoke("dialog:pickPhotoEditorPaths", multiple),
   pickSpriteSheetImagePath: (): Promise<string | null> => ipcRenderer.invoke("dialog:pickSpriteSheetImagePath"),
   pickExportRoot: (): Promise<string | null> => ipcRenderer.invoke("dialog:pickExportRoot"),
   pickBgRemoveImagePaths: (): Promise<string[]> => ipcRenderer.invoke("dialog:pickBgRemoveImagePaths"),
@@ -88,6 +89,9 @@ const api = {
   },
 
   readImageDataUrl: (filePath: string): Promise<string> => ipcRenderer.invoke("file:readImageDataUrl", filePath),
+  readBinaryFile: (
+    filePath: string
+  ): Promise<{ name: string; mimeType: string; dataBase64: string }> => ipcRenderer.invoke("file:readBinaryFile", filePath),
   writeImageDataUrl: (payload: { filePath: string; dataUrl: string }): Promise<boolean> =>
     ipcRenderer.invoke("file:writeImageDataUrl", payload),
   writeTextFile: (payload: { filePath: string; content: string }): Promise<boolean> =>

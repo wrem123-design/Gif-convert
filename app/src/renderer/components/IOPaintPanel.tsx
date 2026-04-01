@@ -86,14 +86,7 @@ function loadToolMode(): ToolMode {
 }
 
 function loadIOPaintViewMode(): IOPaintViewMode {
-  if (typeof window === "undefined") {
-    return "native";
-  }
-  try {
-    return window.localStorage.getItem(IOPAINT_VIEW_MODE_KEY) === "full" ? "full" : "native";
-  } catch {
-    return "native";
-  }
+  return "native";
 }
 
 function loadNativeIOPaintPrefs(): NativeIOPaintPrefs {

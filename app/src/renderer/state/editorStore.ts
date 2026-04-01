@@ -100,7 +100,7 @@ function sanitizeEditorPrefs(raw: unknown): PersistedEditorPrefs {
     ? source.spriteSheetSettings as Record<string, unknown>
     : {};
 
-  const tab: EditorTab = source.tab === "pixel" || source.tab === "export" || source.tab === "bg_remove" || source.tab === "pixel_helper" || source.tab === "leshy_sprite" || source.tab === "photo_editor" || source.tab === "iopaint"
+  const tab: EditorTab = source.tab === "pixel" || source.tab === "bg_remove" || source.tab === "pixel_helper" || source.tab === "leshy_sprite" || source.tab === "photo_editor" || source.tab === "iopaint"
     ? source.tab
     : "sprite";
 

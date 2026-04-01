@@ -45,7 +45,13 @@ interface WorkerResponse {
 }
 
 let worker: Worker | null = null;
+let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
+let shutdownPromise: Promise<void> | null = null;
+let hasSingleInstanceLock = app.requestSingleInstanceLock();
+const SHUTDOWN_TIMEOUT_MS = 3000;
+const SINGLE_INSTANCE_RETRY_MS = 250;
+const SINGLE_INSTANCE_TIMEOUT_MS = 10000;
 const pending = new Map<
   string,
   {
@@ -55,13 +61,45 @@ const pending = new Map<
   }
 >();
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function ensureSingleInstanceLock(): Promise<boolean> {
+  if (hasSingleInstanceLock) {
+    return true;
+  }
+
+  const deadline = Date.now() + SINGLE_INSTANCE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await delay(SINGLE_INSTANCE_RETRY_MS);
+    if (app.requestSingleInstanceLock()) {
+      hasSingleInstanceLock = true;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function resolveWorkerEntry(): string {
+  const unpackedPath = path.join(process.resourcesPath, "app.asar.unpacked", "dist", "main", "processorWorkerBootstrap.js");
+  if (app.isPackaged && fs.pathExistsSync(unpackedPath)) {
+    return unpackedPath;
+  }
+  return path.join(__dirname, "processorWorkerBootstrap.js");
+}
+
 function ensureWorker(): Worker {
   if (worker) {
     return worker;
   }
 
-  const workerPath = path.join(__dirname, "processorWorker.js");
-  worker = new Worker(workerPath);
+  worker = new Worker(resolveWorkerEntry(), {
+    workerData: {
+      appRoot: app.getAppPath()
+    }
+  });
 
   worker.on("message", (msg: WorkerResponse) => {
     const entry = pending.get(msg.id);
@@ -135,6 +173,7 @@ function createWindow(): BrowserWindow {
       sandbox: false
     }
   });
+  mainWindow = win;
 
   const devServer = process.env.VITE_DEV_SERVER_URL;
   if (devServer) {
@@ -149,9 +188,17 @@ function createWindow(): BrowserWindow {
     win.webContents.setIgnoreMenuShortcuts(!input.control && !input.meta);
   });
 
-  win.on("close", () => {
-    if (process.platform !== "darwin") {
-      isQuitting = true;
+  win.on("close", (event) => {
+    if (isQuitting) {
+      return;
+    }
+    event.preventDefault();
+    void requestAppExit(0);
+  });
+
+  win.on("closed", () => {
+    if (mainWindow === win) {
+      mainWindow = null;
     }
   });
 
@@ -159,15 +206,42 @@ function createWindow(): BrowserWindow {
 }
 
 async function shutdownAppServices(): Promise<void> {
-  const tasks: Promise<unknown>[] = [shutdownIOPaint(), shutdownMarkRemover()];
-
-  if (worker) {
-    const currentWorker = worker;
-    worker = null;
-    tasks.push(currentWorker.terminate().catch(() => undefined));
+  if (shutdownPromise) {
+    await shutdownPromise;
+    return;
   }
 
-  await Promise.allSettled(tasks);
+  shutdownPromise = (async () => {
+    const tasks: Promise<unknown>[] = [shutdownIOPaint(), shutdownMarkRemover()];
+
+    if (worker) {
+      const currentWorker = worker;
+      worker = null;
+      tasks.push(currentWorker.terminate().catch(() => undefined));
+    }
+
+    await Promise.race([
+      Promise.allSettled(tasks),
+      delay(SHUTDOWN_TIMEOUT_MS)
+    ]);
+  })();
+
+  await shutdownPromise;
+}
+
+async function requestAppExit(exitCode = 0): Promise<void> {
+  if (isQuitting) {
+    return;
+  }
+
+  isQuitting = true;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.destroy();
+    }
+  }
+  await shutdownAppServices();
+  app.exit(exitCode);
 }
 
 async function ensureDefaultProjectDir(): Promise<string> {
@@ -202,10 +276,27 @@ async function pickImportPathsDialog(win: BrowserWindow): Promise<string[]> {
   return result.canceled ? [] : result.filePaths;
 }
 
-async function pickMediaPathsDialog(win: BrowserWindow): Promise<string[]> {
-  const result = await dialog.showOpenDialog(win, {
+async function pickMediaPathsDialog(_win: BrowserWindow): Promise<string[]> {
+  const result = await dialog.showOpenDialog({
     title: "Open GIF, Video, or Image Files",
-    properties: ["openFile", "multiSelections"]
+    properties: ["openFile", "multiSelections"],
+    filters: [
+      { name: "Media Files", extensions: ["gif", "png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "mp4", "webm", "mov", "avi", "mkv", "wmv", "m4v", "flv", "mpg", "mpeg", "ts", "m2ts", "3gp", "3g2"] },
+      { name: "All Files", extensions: ["*"] }
+    ]
+  });
+
+  return result.canceled ? [] : result.filePaths;
+}
+
+async function pickPhotoEditorPathsDialog(_win: BrowserWindow, multiple = true): Promise<string[]> {
+  const result = await dialog.showOpenDialog({
+    title: "Open Image or Document Files",
+    properties: multiple ? ["openFile", "multiSelections"] : ["openFile"],
+    filters: [
+      { name: "Photo Editor Files", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "psd", "pdf", "bpy", "bpp"] },
+      { name: "All Files", extensions: ["*"] }
+    ]
   });
 
   return result.canceled ? [] : result.filePaths;
@@ -295,6 +386,17 @@ function inferImageMime(filePath: string): string {
   return "image/png";
 }
 
+function inferFileMime(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".pdf") return "application/pdf";
+  if (ext === ".psd") return "image/vnd.adobe.photoshop";
+  if (ext === ".bpy") return "application/octet-stream";
+  if (isStillImagePath(filePath) || ext === ".gif") {
+    return inferImageMime(filePath);
+  }
+  return "application/octet-stream";
+}
+
 function isStillImagePath(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
   return [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"].includes(ext);
@@ -348,7 +450,27 @@ function createAppMenu(win: BrowserWindow): void {
   Menu.setApplicationMenu(menu);
 }
 
+app.on("second-instance", () => {
+  const win = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) {
+      win.restore();
+    }
+    win.focus();
+  }
+
+  if (!isQuitting) {
+    void requestAppExit(0);
+  }
+});
+
 app.whenReady().then(async () => {
+  const lockAcquired = await ensureSingleInstanceLock();
+  if (!lockAcquired) {
+    app.exit(0);
+    return;
+  }
+
   const win = createWindow();
   createAppMenu(win);
 
@@ -366,6 +488,10 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("dialog:pickMediaPaths", async () => {
     return await pickMediaPathsDialog(win);
+  });
+
+  ipcMain.handle("dialog:pickPhotoEditorPaths", async (_event, multiple?: boolean) => {
+    return await pickPhotoEditorPathsDialog(win, multiple !== false);
   });
 
   ipcMain.handle("dialog:pickSpriteSheetImagePath", async () => {
@@ -430,6 +556,15 @@ app.whenReady().then(async () => {
     return `data:${inferImageMime(filePath)};base64,${data.toString("base64")}`;
   });
 
+  ipcMain.handle("file:readBinaryFile", async (_event, filePath: string) => {
+    const data = await fs.readFile(filePath);
+    return {
+      name: path.basename(filePath),
+      mimeType: inferFileMime(filePath),
+      dataBase64: data.toString("base64")
+    };
+  });
+
   ipcMain.handle("file:writeImageDataUrl", async (_event, payload: { filePath: string; dataUrl: string }) => {
     const base64 = payload.dataUrl.split(",")[1];
     if (!base64) {
@@ -468,12 +603,8 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    void (async () => {
-      isQuitting = true;
-      await shutdownAppServices();
-      app.exit(0);
-    })();
+  if (process.platform !== "darwin" && !isQuitting) {
+    void requestAppExit(0);
   }
 });
 
@@ -482,9 +613,5 @@ app.on("before-quit", (event) => {
     return;
   }
   event.preventDefault();
-  isQuitting = true;
-  void (async () => {
-    await shutdownAppServices();
-    app.exit(0);
-  })();
+  void requestAppExit(0);
 });

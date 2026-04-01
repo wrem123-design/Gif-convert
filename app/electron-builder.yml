@@ -8,6 +8,8 @@ files:
   - dist/renderer/**/*
   - package.json
 asar: true
+asarUnpack:
+  - dist/main/processorWorkerBootstrap.js
 win:
   signAndEditExecutable: false
   target:

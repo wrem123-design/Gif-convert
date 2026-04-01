@@ -128,6 +128,7 @@ let installPromise: Promise<IOPaintStatus> | null = null;
 let startPromise: Promise<IOPaintStatus> | null = null;
 let currentPort = IOPAINT_DEFAULT_PORT;
 let currentUrl = `http://${IOPAINT_HOST}:${currentPort}`;
+const COMMAND_CHECK_TIMEOUT_MS = 8000;
 let currentStatus: IOPaintStatus = {
   phase: "idle",
   message: "대기 중",
@@ -183,14 +184,31 @@ function psQuote(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function makePowerShellArgs(command: string): string[] {
+  return ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command];
+}
+
 async function canRunCommand(command: string, args: string[]): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
+    let settled = false;
     const child = spawn(command, args, {
       shell: false,
       windowsHide: true
     });
-    child.on("error", () => resolve(false));
-    child.on("close", (code) => resolve(code === 0));
+    const finish = (result: boolean): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(false);
+    }, COMMAND_CHECK_TIMEOUT_MS);
+    child.on("error", () => finish(false));
+    child.on("close", (code) => finish(code === 0));
   });
 }
 
@@ -223,12 +241,13 @@ async function runCommand(command: string, args: string[], cwd?: string): Promis
 
 async function ensurePrerequisites(): Promise<void> {
   const missing: string[] = [];
+  appendLog("IOPaint 사전 준비 항목을 확인합니다.");
 
   if (!(await canRunCommand("git", ["--version"]))) {
     missing.push("Git for Windows 설치 후 `git --version` 확인");
   }
 
-  if (!(await canRunCommand("powershell", ["-Command", "$PSVersionTable.PSVersion.ToString()"]))) {
+  if (!(await canRunCommand("powershell", makePowerShellArgs("$PSVersionTable.PSVersion.ToString()")))) {
     missing.push("Windows PowerShell 사용 가능 상태 확인");
   }
 
@@ -335,13 +354,13 @@ async function ensureEmbeddedPython(): Promise<void> {
 
   await runCommand(
     "powershell",
-    ["-Command", `Invoke-WebRequest -Uri ${psQuote(pythonUrl)} -OutFile ${psQuote(zipPath)} -UseBasicParsing`],
+    makePowerShellArgs(`Invoke-WebRequest -Uri ${psQuote(pythonUrl)} -OutFile ${psQuote(zipPath)} -UseBasicParsing`),
     runtimeRoot
   );
   await fs.ensureDir(pythonDir);
   await runCommand(
     "powershell",
-    ["-Command", `Expand-Archive -Path ${psQuote(zipPath)} -DestinationPath ${psQuote(pythonDir)} -Force`],
+    makePowerShellArgs(`Expand-Archive -Path ${psQuote(zipPath)} -DestinationPath ${psQuote(pythonDir)} -Force`),
     runtimeRoot
   );
   await fs.remove(zipPath);
@@ -358,7 +377,7 @@ async function ensureEmbeddedPython(): Promise<void> {
   await fs.ensureDir(path.join(pythonDir, "Lib", "site-packages"));
   await runCommand(
     "powershell",
-    ["-Command", `Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile ${psQuote(getPipPath)} -UseBasicParsing`],
+    makePowerShellArgs(`Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile ${psQuote(getPipPath)} -UseBasicParsing`),
     runtimeRoot
   );
   await runCommand(pythonExe, [getPipPath, "--no-warn-script-location"], runtimeRoot);

@@ -3,7 +3,6 @@ import { LeftPanel } from "./components/LeftPanel";
 import { TimelinePanel } from "./components/TimelinePanel";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { PixelEditorPanel } from "./components/PixelEditorPanel";
-import { ExportCenterPanel } from "./components/ExportCenterPanel";
 import { BackgroundRemovalPanel } from "./components/BackgroundRemovalPanel";
 import { SpriteFramePreviewPanel } from "./components/SpriteFramePreviewPanel";
 import { PixelHelperPanel } from "./components/PixelHelperPanel";
@@ -74,9 +73,6 @@ const IconGrid = () => (
 const IconPen = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
 );
-const IconExport = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><path d="m17 8-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>
-);
 const IconCut = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/></svg>
 );
@@ -93,6 +89,11 @@ const IconSparkles = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8Z"/><path d="M5 17l.9 2.1L8 20l-2.1.9L5 23l-.9-2.1L2 20l2.1-.9Z"/><path d="M19 14l1 2 2 1-2 1-1 2-1-2-2-1 2-1Z"/></svg>
 );
 type AppTab = "sprite" | "pixel" | "export" | "bg_remove" | "pixel_helper" | "leshy_sprite" | "photo_editor" | "iopaint";
+const PERSISTENT_TOOL_TABS: AppTab[] = ["bg_remove", "pixel_helper", "leshy_sprite", "photo_editor", "iopaint"];
+
+function isPersistentToolTab(tab: AppTab): boolean {
+  return PERSISTENT_TOOL_TABS.includes(tab);
+}
 
 export function App(): JSX.Element {
   const { t } = useI18n();
@@ -114,6 +115,7 @@ export function App(): JSX.Element {
   const [theme, setThemeState] = useState<ThemeMode>(loadTheme);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(200);
   const [compactLayout, setCompactLayout] = useState(() => window.innerWidth <= 980);
+  const [mountedToolTabs, setMountedToolTabs] = useState<AppTab[]>(() => (isPersistentToolTab(tab) ? [tab] : []));
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const bottomResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
 
@@ -188,9 +190,8 @@ export function App(): JSX.Element {
   const isProjectWorkspaceTab = tab === "sprite" || tab === "pixel" || tab === "export";
   const activeTabLabel = (
     tab === "sprite" ? t("tab_sprite")
-      : tab === "pixel" ? t("tab_pixel")
-        : tab === "export" ? t("tab_export")
-          : tab === "bg_remove" ? t("tab_bg_remove")
+      : tab === "pixel" || tab === "export" ? t("tab_pixel")
+        : tab === "bg_remove" ? t("tab_bg_remove")
             : tab === "pixel_helper" ? t("tab_pixel_helper")
               : tab === "leshy_sprite" ? t("tab_leshy_sprite")
                 : tab === "photo_editor" ? t("tab_photo_editor")
@@ -204,10 +205,18 @@ export function App(): JSX.Element {
   const workspaceStyle = !compactLayout && showBottomResize
     ? { gridTemplateRows: `minmax(0, 1fr) 10px ${Math.round(bottomPanelHeight)}px` }
     : undefined;
+  const shouldRenderPersistentToolPanel = (panelTab: AppTab): boolean => tab === panelTab || mountedToolTabs.includes(panelTab);
 
   useEffect(() => {
     void init();
   }, [init]);
+
+  useEffect(() => {
+    if (!isPersistentToolTab(tab)) {
+      return;
+    }
+    setMountedToolTabs((current) => (current.includes(tab) ? current : [...current, tab]));
+  }, [tab]);
 
   useEffect(() => {
     const offOpen = window.spriteForge.onMenuOpenProjectDir((dir) => {
@@ -242,10 +251,6 @@ export function App(): JSX.Element {
       setActiveHelpTopic("pixel_tools");
       return;
     }
-    if (nextTab === "export") {
-      setActiveHelpTopic("export_scope_all");
-      return;
-    }
     if (nextTab === "bg_remove") {
       setActiveHelpTopic("bg_remove");
       return;
@@ -256,17 +261,12 @@ export function App(): JSX.Element {
   const tabItems: Array<{ id: AppTab; label: string; icon: JSX.Element; tone: "project" | "tool" }> = [
     { id: "sprite", label: t("tab_sprite"), icon: <IconGrid />, tone: "project" },
     { id: "pixel", label: t("tab_pixel"), icon: <IconPen />, tone: "project" },
-    { id: "export", label: t("tab_export"), icon: <IconExport />, tone: "project" },
     { id: "bg_remove", label: t("tab_bg_remove"), icon: <IconCut />, tone: "tool" },
     { id: "pixel_helper", label: t("tab_pixel_helper"), icon: <IconWand />, tone: "tool" },
     { id: "leshy_sprite", label: t("tab_leshy_sprite"), icon: <IconMap />, tone: "tool" },
     { id: "photo_editor", label: t("tab_photo_editor"), icon: <IconImage />, tone: "tool" },
     { id: "iopaint", label: t("tab_iopaint"), icon: <IconSparkles />, tone: "tool" }
   ];
-  const persistentToolPanelStyle = (panelTab: AppTab) => ({
-    display: tab === panelTab ? "block" : "none",
-    height: "100%"
-  });
 
   return (
     <div
@@ -367,13 +367,7 @@ export function App(): JSX.Element {
 
       {/* ── Workspace ── */}
       <div ref={workspaceRef} className={workspaceClassName} style={workspaceStyle}>
-        {tab === "photo_editor" || tab === "iopaint" ? null : tab === "bg_remove" ? (
-          <BackgroundRemovalPanel />
-        ) : tab === "pixel_helper" ? (
-          <PixelHelperPanel />
-        ) : tab === "leshy_sprite" ? (
-          <LeshySpritePanel />
-        ) : tab === "sprite" ? (
+        {tab === "sprite" ? (
           <>
             <PixelEditorPanel mode="sprite" />
             <SpriteFramePreviewPanel />
@@ -391,11 +385,10 @@ export function App(): JSX.Element {
             ) : null}
             <TimelinePanel />
           </>
-        ) : (
+        ) : tab === "pixel" || tab === "export" ? (
           <>
             <LeftPanel />
-            {tab === "pixel" ? <PixelEditorPanel mode="asset" /> : null}
-            {tab === "export" ? <ExportCenterPanel /> : null}
+            <PixelEditorPanel mode="asset" />
             <InspectorPanel />
             {!compactLayout ? (
               <div
@@ -411,13 +404,32 @@ export function App(): JSX.Element {
             ) : null}
             <TimelinePanel />
           </>
-        )}
-        <div className="persistent-tool-panel" style={persistentToolPanelStyle("photo_editor")} aria-hidden={tab !== "photo_editor"}>
-          <PhotoEditorPanel />
-        </div>
-        <div className="persistent-tool-panel" style={persistentToolPanelStyle("iopaint")} aria-hidden={tab !== "iopaint"}>
-          <IOPaintPanel />
-        </div>
+        ) : null}
+        {shouldRenderPersistentToolPanel("bg_remove") ? (
+          <div className={`persistent-tool-panel${tab === "bg_remove" ? " is-active" : ""}`} aria-hidden={tab !== "bg_remove"}>
+            <BackgroundRemovalPanel />
+          </div>
+        ) : null}
+        {shouldRenderPersistentToolPanel("pixel_helper") ? (
+          <div className={`persistent-tool-panel${tab === "pixel_helper" ? " is-active" : ""}`} aria-hidden={tab !== "pixel_helper"}>
+            <PixelHelperPanel />
+          </div>
+        ) : null}
+        {shouldRenderPersistentToolPanel("leshy_sprite") ? (
+          <div className={`persistent-tool-panel${tab === "leshy_sprite" ? " is-active" : ""}`} aria-hidden={tab !== "leshy_sprite"}>
+            <LeshySpritePanel />
+          </div>
+        ) : null}
+        {shouldRenderPersistentToolPanel("photo_editor") ? (
+          <div className={`persistent-tool-panel${tab === "photo_editor" ? " is-active" : ""}`} aria-hidden={tab !== "photo_editor"}>
+            <PhotoEditorPanel />
+          </div>
+        ) : null}
+        {shouldRenderPersistentToolPanel("iopaint") ? (
+          <div className={`persistent-tool-panel${tab === "iopaint" ? " is-active" : ""}`} aria-hidden={tab !== "iopaint"}>
+            <IOPaintPanel />
+          </div>
+        ) : null}
       </div>
 
       {/* ── Status Bar ── */}
@@ -483,7 +495,7 @@ export function App(): JSX.Element {
               {/* App Info */}
               <div className="settings-section">
                 <span className="settings-section-title">정보</span>
-                <p className="settings-info">Sprite Studio v1.0.1</p>
+                <p className="settings-info">Sprite Studio v1.0.2</p>
               </div>
             </div>
 
