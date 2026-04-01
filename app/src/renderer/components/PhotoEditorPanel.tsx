@@ -60,6 +60,55 @@ const getSelectionBounds = (points) => {
 };
 
 const shiftSelection = (points, dx, dy) => [points.map((point) => ({ x: point.x + dx, y: point.y + dy }))];
+const getCanvasForDocument = (activeDocument) => {
+  if (!activeDocument) {
+    return null;
+  }
+  const canvases = Array.from(document.querySelectorAll("canvas")).filter((canvas) => {
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      return false;
+    }
+    const rect = canvas.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  });
+  let bestCanvas = null;
+  let bestScore = 0;
+  for (const canvas of canvases) {
+    const widthScore = Math.abs((canvas.width || 0) - (activeDocument.width || 0));
+    const heightScore = Math.abs((canvas.height || 0) - (activeDocument.height || 0));
+    const score = widthScore + heightScore;
+    if (!bestCanvas || score < bestScore) {
+      bestCanvas = canvas;
+      bestScore = score;
+    }
+  }
+  return bestCanvas;
+};
+const clientPointToDocumentPoint = (clientX, clientY, activeDocument) => {
+  const canvas = getCanvasForDocument(activeDocument);
+  if (!canvas) {
+    return null;
+  }
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+  const scaleX = (activeDocument == null ? void 0 : activeDocument.width) ? activeDocument.width / rect.width : canvas.width / rect.width;
+  const scaleY = (activeDocument == null ? void 0 : activeDocument.height) ? activeDocument.height / rect.height : canvas.height / rect.height;
+  return {
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY
+  };
+};
+const isPointInsideBounds = (point, bounds) => {
+  if (!point || !bounds) {
+    return false;
+  }
+  return point.x >= bounds.left
+    && point.x <= bounds.left + bounds.width
+    && point.y >= bounds.top
+    && point.y <= bounds.top + bounds.height;
+};
 const buildSelectionPath = (ctx, points) => {
   if (!ctx || !Array.isArray(points) || points.length === 0) {
     return false;
@@ -232,6 +281,9 @@ const ensureToolButton = () => {
 
   const existing = document.getElementById(TOOL_ID);
   if (existing && existing.isConnected) {
+    existing.classList.toggle("active", isToolActive());
+    existing.classList.toggle(TOOL_ACTIVE_CLASS, isToolActive());
+    existing.setAttribute("aria-pressed", isToolActive() ? "true" : "false");
     return existing;
   }
 
@@ -243,6 +295,8 @@ const ensureToolButton = () => {
 
   const button = anchor.cloneNode(true);
   button.id = TOOL_ID;
+  button.type = "button";
+  button.disabled = false;
   button.classList.remove("active");
   button.classList.remove(TOOL_ACTIVE_CLASS);
   button.title = "자르기 이동 도구";
@@ -262,9 +316,12 @@ const ensureToolButton = () => {
     fallbackIcon.setAttribute("aria-hidden", "true");
     button.replaceChildren(fallbackIcon);
   }
-  button.addEventListener("click", async (event) => {
+  const activateTool = async (event) => {
     event.preventDefault();
     event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === "function") {
+      event.stopImmediatePropagation();
+    }
     const nextActive = !isToolActive();
     setToolActive(nextActive);
     const store = getStore();
@@ -283,8 +340,13 @@ const ensureToolButton = () => {
     } else {
       store.commit("setActiveTool", { tool: "selection", document: activeDocument });
     }
-  });
+  };
+  button.addEventListener("pointerdown", activateTool, true);
+  button.addEventListener("click", activateTool, true);
   anchor.parentElement.insertBefore(button, anchor);
+  button.classList.toggle("active", isToolActive());
+  button.classList.toggle(TOOL_ACTIVE_CLASS, isToolActive());
+  button.setAttribute("aria-pressed", isToolActive() ? "true" : "false");
   return button;
 };
 
@@ -296,10 +358,101 @@ const ensurePatched = async () => {
   window.__spriteForgePhotoEditorPatched = true;
   ensureToolButton();
   setToolActive(false);
+  let dragState = null;
   const observer = new MutationObserver(() => {
     ensureToolButton();
   });
   observer.observe(document.body, { childList: true, subtree: true });
+
+  window.addEventListener("pointerdown", async (event) => {
+    if (!isToolActive() || event.button !== 0 || isTypingTarget(event.target)) {
+      return;
+    }
+    const store = getStore();
+    const activeDocument = store && store.getters ? store.getters.activeDocument : null;
+    const activeLayer = store && store.getters ? store.getters.activeLayer : null;
+    const activeLayerIndex = store && store.getters ? store.getters.activeLayerIndex : -1;
+    const selectionPoints = activeDocument ? getSelectionPoints(activeDocument.activeSelection) : null;
+    const bounds = getSelectionBounds(selectionPoints);
+    if (!store || !activeDocument || !activeLayer || activeLayerIndex < 0 || !selectionPoints || !bounds) {
+      return;
+    }
+    const documentPoint = clientPointToDocumentPoint(event.clientX, event.clientY, activeDocument);
+    if (!isPointInsideBounds(documentPoint, bounds)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    let workingDocument = activeDocument;
+    let workingLayer = activeLayer;
+    let workingLayerIndex = activeLayerIndex;
+
+    if (!looksLikeFloatingLayer(activeLayer, bounds)) {
+      const materialized = await runWithoutNotifications(store, async () =>
+        ensureFloatingSelection(store, activeDocument, activeLayer, activeLayerIndex, selectionPoints, bounds)
+      );
+      if (!materialized) {
+        return;
+      }
+      workingDocument = materialized.document;
+      workingLayerIndex = materialized.layerIndex;
+      workingLayer = workingDocument.layers[workingLayerIndex];
+    }
+
+    store.commit("setActiveLayerIndex", workingLayerIndex);
+    store.commit("setActiveTool", { tool: "move", document: workingDocument });
+    dragState = {
+      pointerId: event.pointerId,
+      startPoint: documentPoint,
+      baseLeft: Math.round(workingLayer.left ?? bounds.left),
+      baseTop: Math.round(workingLayer.top ?? bounds.top),
+      layerIndex: workingLayerIndex
+    };
+  }, true);
+
+  window.addEventListener("pointermove", (event) => {
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+    const store = getStore();
+    const activeDocument = store && store.getters ? store.getters.activeDocument : null;
+    const selectionPoints = activeDocument ? getSelectionPoints(activeDocument.activeSelection) : null;
+    if (!store || !activeDocument || !selectionPoints) {
+      return;
+    }
+    const documentPoint = clientPointToDocumentPoint(event.clientX, event.clientY, activeDocument);
+    if (!documentPoint) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const deltaX = Math.round(documentPoint.x - dragState.startPoint.x);
+    const deltaY = Math.round(documentPoint.y - dragState.startPoint.y);
+    store.commit("updateLayer", {
+      index: dragState.layerIndex,
+      opts: {
+        left: dragState.baseLeft + deltaX,
+        top: dragState.baseTop + deltaY
+      }
+    });
+    store.commit("setActiveSelection", shiftSelection(selectionPoints, deltaX, deltaY));
+  }, true);
+
+  window.addEventListener("pointerup", (event) => {
+    if (dragState && dragState.pointerId === event.pointerId) {
+      dragState = null;
+    }
+  }, true);
+
+  window.addEventListener("pointercancel", (event) => {
+    if (dragState && dragState.pointerId === event.pointerId) {
+      dragState = null;
+    }
+  }, true);
 
   window.addEventListener("keydown", async (event) => {
     if (isTypingTarget(event.target)) {

@@ -45,10 +45,9 @@ npm run package:portable
 
 ## IOPaint prerequisites
 - The `IOPaint` tab is not a static bundled page.
-- On first use the app clones the IOPaint repo, creates a Python venv, installs the package, builds `web_app`, and starts a local server.
+- On first use the app clones the IOPaint repo, prepares an embedded Python runtime, installs the package, recovers `web_app` if needed, and starts a local loopback server on an available port.
 - Before opening that tab, confirm these commands work in a new terminal:
   - `git --version`
-  - `python --version`
   - `npm --version`
 - Detailed setup guide: `docs/IOPAINT_SETUP.md`
 

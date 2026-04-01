@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { IOPaintStatus } from "./iopaintManager";
+import type {
+  MarkRemoverPreviewOptions,
+  MarkRemoverPreviewResult,
+  MarkRemoverRunOptions,
+  MarkRemoverStatus
+} from "./markRemoverManager";
 
 const api = {
   pickProjectDir: (): Promise<string> => ipcRenderer.invoke("dialog:pickProjectDir"),
@@ -15,8 +21,16 @@ const api = {
     ipcRenderer.invoke("dialog:pickLeshyAnimationSavePath", defaultName),
   getDefaultProjectDir: (): Promise<string> => ipcRenderer.invoke("app:getDefaultProjectDir"),
   getIOPaintStatus: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:getStatus"),
+  ensureIOPaintInstalled: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:ensureInstalled"),
   ensureIOPaintStarted: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:ensureStarted"),
   restartIOPaint: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:restart"),
+  getMarkRemoverStatus: (): Promise<MarkRemoverStatus> => ipcRenderer.invoke("markremover:getStatus"),
+  ensureMarkRemoverInstalled: (): Promise<MarkRemoverStatus> => ipcRenderer.invoke("markremover:ensureInstalled"),
+  previewMarkRemover: (payload: MarkRemoverPreviewOptions): Promise<MarkRemoverPreviewResult> =>
+    ipcRenderer.invoke("markremover:preview", payload),
+  runMarkRemover: (payload: MarkRemoverRunOptions): Promise<MarkRemoverStatus> =>
+    ipcRenderer.invoke("markremover:run", payload),
+  stopMarkRemover: (): Promise<MarkRemoverStatus> => ipcRenderer.invoke("markremover:stop"),
 
   loadProject: (payload: { projectDir: string }) => ipcRenderer.invoke("project:load", payload),
   saveProject: (payload: { projectDir: string; project: unknown }) => ipcRenderer.invoke("project:save", payload),
@@ -49,6 +63,13 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, status: IOPaintStatus) => callback(status);
     ipcRenderer.on("iopaint:status", listener);
     return () => ipcRenderer.removeListener("iopaint:status", listener);
+  },
+  onMarkRemoverStatus: (
+    callback: (status: MarkRemoverStatus) => void
+  ): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: MarkRemoverStatus) => callback(status);
+    ipcRenderer.on("markremover:status", listener);
+    return () => ipcRenderer.removeListener("markremover:status", listener);
   },
 
   readImageDataUrl: (filePath: string): Promise<string> => ipcRenderer.invoke("file:readImageDataUrl", filePath),

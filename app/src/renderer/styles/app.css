@@ -1512,37 +1512,73 @@ body.workspace-resizing {
   gap: 12px;
 }
 
-.iopaint-runtime-toggle-summary {
-  padding: 6px 2px 0;
+.iopaint-mode-toggle {
+  flex-wrap: wrap;
 }
 
-.iopaint-guide-card {
+.iopaint-setup-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: 14px;
+  padding: 16px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   background: linear-gradient(180deg, rgba(91, 156, 246, 0.08), rgba(255, 255, 255, 0.02));
 }
 
-.iopaint-guide-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.iopaint-guide-list {
-  margin: 0;
-  padding-left: 18px;
+.iopaint-setup-copy {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  color: var(--text-primary);
+  max-width: 840px;
 }
 
-.iopaint-guide-note {
-  margin: 0;
+.iopaint-setup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.iopaint-setup-grid.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.iopaint-setup-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: rgba(11, 18, 32, 0.58);
+}
+
+.iopaint-setup-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.iopaint-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-default);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.iopaint-chip.done {
+  border-color: rgba(78, 203, 141, 0.3);
+  background: rgba(78, 203, 141, 0.14);
+  color: #cff6df;
 }
 
 .iopaint-status-card {
@@ -1555,6 +1591,10 @@ body.workspace-resizing {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015));
+}
+
+.iopaint-status-card.compact {
+  padding: 12px 14px;
 }
 
 .iopaint-status-copy {
@@ -1661,6 +1701,11 @@ body.workspace-resizing {
   word-break: break-word;
 }
 
+.iopaint-log-output.standalone {
+  margin: 0;
+  padding: 0;
+}
+
 .iopaint-shell {
   position: relative;
   flex: 1;
@@ -1671,6 +1716,172 @@ body.workspace-resizing {
   background:
     linear-gradient(180deg, rgba(10, 16, 28, 0.92), rgba(10, 16, 28, 0.82)),
     #0b1220;
+}
+
+.iopaint-empty-state {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.markremover-shell {
+  flex: 1;
+  min-height: 0;
+}
+
+.markremover-layout {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.markremover-sidebar,
+.markremover-preview-pane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.markremover-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: rgba(10, 16, 28, 0.72);
+  box-shadow: var(--shadow-sm);
+}
+
+.markremover-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.markremover-picker-row,
+.markremover-action-row {
+  flex-wrap: wrap;
+}
+
+.markremover-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.markremover-progress-card {
+  margin-top: auto;
+}
+
+.markremover-progress-track {
+  width: 100%;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.markremover-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  transition: width 0.2s ease;
+}
+
+.markremover-code {
+  display: block;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markremover-preview-card {
+  flex: 1;
+  min-height: 0;
+}
+
+.markremover-preview-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.markremover-preview-image-wrap {
+  min-height: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: auto;
+  background:
+    linear-gradient(45deg, var(--checker-a) 25%, var(--checker-b) 25%) 0 0 / 16px 16px,
+    linear-gradient(-45deg, var(--checker-a) 25%, var(--checker-b) 25%) 0 0 / 16px 16px,
+    var(--bg-input);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 16px;
+}
+
+.markremover-preview-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.markremover-preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.markremover-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.markremover-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-default);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.markremover-stat-card span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.markremover-stat-card strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markremover-log-card {
+  min-height: 220px;
 }
 
 .iopaint-frame-status {
@@ -3298,9 +3509,19 @@ body.pixel-helper-resizing {
     flex-direction: column;
   }
 
+  .iopaint-setup-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .iopaint-meta-grid {
     width: 100%;
     min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .markremover-layout,
+  .markremover-field-grid,
+  .markremover-stat-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

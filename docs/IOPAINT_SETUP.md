@@ -1,20 +1,21 @@
 # IOPaint Setup
 
-`IOPaint` tab does more than open a cloned repo. On first run, the app tries to:
+`IOPaint` integration does more than open a cloned repo. On first run, the app tries to:
 
 1. Clone `https://github.com/Sanster/IOPaint.git`
-2. Create a dedicated Python virtual environment
+2. Download and prepare an embedded Python runtime inside the app data folder
 3. Run `pip install .`
-4. Build the bundled `web_app`
-5. Start a local server at `http://127.0.0.1:8080`
+4. Recover `web_app` assets if they are missing
+5. Start a local loopback server on an available port chosen at runtime
 
-If one of the prerequisites is missing, the tab will stay in the setup/error state.
+If one of the prerequisites is missing, the tab stays in the setup or error state.
 
 ## Required software
 
 - Git for Windows
-- Python 3.10 or newer
 - Node.js 20 or newer
+
+Python is bundled by the app on first install. A separate system Python installation is not required.
 
 ## Windows install checklist
 
@@ -24,32 +25,25 @@ If one of the prerequisites is missing, the tab will stay in the setup/error sta
 git --version
 ```
 
-2. Install Python 3.10+ and make sure `Add python.exe to PATH` is enabled during setup. Then confirm:
-
-```powershell
-python --version
-```
-
-If `python` does not work, the app cannot create the IOPaint virtual environment.
-
-3. Install Node.js 20+ and confirm:
+2. Install Node.js 20+ and confirm:
 
 ```powershell
 npm --version
 ```
 
+Node.js is only needed when the app has to rebuild or recover the `web_app` assets from source.
+
 ## First run notes
 
-- The first successful launch can take a while because clone, pip install, frontend build, and model download may all happen together.
+- The first successful launch can take a while because clone, pip install, frontend asset recovery, and model download may all happen together.
 - Internet access is required on the first setup run.
-- The runtime paths are shown inside the app in the `IOPaint` tab.
+- The runtime paths and the actual local server URL are shown inside the app in the `IOPaint` tab.
 
 ## When the tab does not start
 
 Check these first:
 
 1. `git --version`
-2. `python --version`
-3. `npm --version`
+2. `npm --version`
 
-If any of those fail in a fresh terminal, fix that first and then reopen the app or use the `서비스 재시작` button in the `IOPaint` tab.
+If either command fails in a fresh terminal, fix that first and then reopen the app.

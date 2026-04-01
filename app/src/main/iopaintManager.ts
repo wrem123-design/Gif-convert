@@ -1,13 +1,14 @@
 import { app, BrowserWindow } from "electron";
 import path from "node:path";
 import http from "node:http";
+import net from "node:net";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "fs-extra";
 
 const IOPAINT_REPO_URL = "https://github.com/Sanster/IOPaint.git";
 const IOPAINT_HOST = "127.0.0.1";
-const IOPAINT_PORT = 8080;
-const IOPAINT_URL = `http://${IOPAINT_HOST}:${IOPAINT_PORT}`;
+const IOPAINT_DEFAULT_PORT = 8080;
+const EMBEDDED_PYTHON_VERSION = "3.12.7";
 const LOG_LIMIT = 80;
 
 export type IOPaintPhase =
@@ -23,6 +24,7 @@ export type IOPaintPhase =
 export interface IOPaintStatus {
   phase: IOPaintPhase;
   message: string;
+  installed: boolean;
   ready: boolean;
   managed: boolean;
   url: string;
@@ -40,17 +42,13 @@ interface IOPaintRuntimePaths {
   repoWebAppDir: string;
   repoWebAppSourceDir: string;
   repoWebAppDistDir: string;
-  venvDir: string;
+  pythonDir: string;
   modelDir: string;
   packageDir: string;
   packageWebAppDir: string;
-  venvPython: string;
-}
-
-interface PythonCommand {
-  command: string;
-  argsPrefix: string[];
-  label: string;
+  pythonExe: string;
+  pythonPth: string;
+  installStamp: string;
 }
 
 function getRuntimePaths(): IOPaintRuntimePaths {
@@ -60,11 +58,14 @@ function getRuntimePaths(): IOPaintRuntimePaths {
   const repoWebAppDir = path.join(repoPackageDir, "web_app");
   const repoWebAppSourceDir = path.join(repoDir, "web_app");
   const repoWebAppDistDir = path.join(repoWebAppSourceDir, "dist");
-  const venvDir = path.join(runtimeRoot, ".venv");
+  const pythonDir = path.join(runtimeRoot, "python");
   const modelDir = path.join(runtimeRoot, "models");
-  const packageDir = path.join(venvDir, "Lib", "site-packages", "iopaint");
+  const packageDir = path.join(pythonDir, "Lib", "site-packages", "iopaint");
   const packageWebAppDir = path.join(packageDir, "web_app");
-  const venvPython = path.join(venvDir, "Scripts", "python.exe");
+  const pythonExe = path.join(pythonDir, "python.exe");
+  const pythonPth = path.join(pythonDir, "python312._pth");
+  const installStamp = path.join(runtimeRoot, "install.stamp");
+
   return {
     runtimeRoot,
     repoDir,
@@ -72,33 +73,51 @@ function getRuntimePaths(): IOPaintRuntimePaths {
     repoWebAppDir,
     repoWebAppSourceDir,
     repoWebAppDistDir,
-    venvDir,
+    pythonDir,
     modelDir,
     packageDir,
     packageWebAppDir,
-    venvPython
+    pythonExe,
+    pythonPth,
+    installStamp
   };
+}
+
+function detectInstalledSync(): boolean {
+  const { pythonExe, installStamp, packageWebAppDir, repoWebAppDir, repoWebAppDistDir } = getRuntimePaths();
+  return fs.existsSync(pythonExe)
+    && fs.existsSync(installStamp)
+    && (
+      fs.existsSync(path.join(packageWebAppDir, "index.html"))
+      || fs.existsSync(path.join(repoWebAppDir, "index.html"))
+      || fs.existsSync(path.join(repoWebAppDistDir, "index.html"))
+    );
 }
 
 function withRuntimePaths(status: IOPaintStatus): IOPaintStatus {
   const paths = getRuntimePaths();
   return {
     ...status,
+    installed: detectInstalledSync(),
+    url: currentUrl,
     repoDir: paths.repoDir,
-    venvDir: paths.venvDir,
+    venvDir: paths.pythonDir,
     modelDir: paths.modelDir
   };
 }
 
 let serviceProcess: ChildProcessWithoutNullStreams | null = null;
-let ensurePromise: Promise<IOPaintStatus> | null = null;
-let resolvedPython: PythonCommand | null = null;
+let installPromise: Promise<IOPaintStatus> | null = null;
+let startPromise: Promise<IOPaintStatus> | null = null;
+let currentPort = IOPAINT_DEFAULT_PORT;
+let currentUrl = `http://${IOPAINT_HOST}:${currentPort}`;
 let currentStatus: IOPaintStatus = {
   phase: "idle",
   message: "대기 중",
+  installed: false,
   ready: false,
   managed: false,
-  url: IOPAINT_URL,
+  url: currentUrl,
   repoDir: "",
   venvDir: "",
   modelDir: "",
@@ -133,9 +152,28 @@ function broadcastStatus(): void {
   }
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function waitForExit(process: ChildProcessWithoutNullStreams): Promise<number | null> {
   return new Promise((resolve) => {
     process.once("close", resolve);
+  });
+}
+
+function psQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+async function canRunCommand(command: string, args: string[]): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const child = spawn(command, args, {
+      shell: false,
+      windowsHide: true
+    });
+    child.on("error", () => resolve(false));
+    child.on("close", (code) => resolve(code === 0));
   });
 }
 
@@ -166,62 +204,24 @@ async function runCommand(command: string, args: string[], cwd?: string): Promis
   });
 }
 
-async function canRunCommand(command: string, args: string[]): Promise<boolean> {
-  return await new Promise<boolean>((resolve) => {
-    const child = spawn(command, args, {
-      shell: false,
-      windowsHide: true
-    });
-    child.on("error", () => resolve(false));
-    child.on("close", (code) => resolve(code === 0));
-  });
-}
-
 async function ensurePrerequisites(): Promise<void> {
   const missing: string[] = [];
 
   if (!(await canRunCommand("git", ["--version"]))) {
-    missing.push("Git is not available. Install Git for Windows and confirm `git --version` works in a new terminal.");
+    missing.push("Git for Windows 설치 후 `git --version` 확인");
   }
 
-  const hasPython = (await canRunCommand("python", ["--version"])) || (await canRunCommand("py", ["-3", "--version"]));
-  if (!hasPython) {
-    missing.push(
-      "Python 3 is not available. Install Python 3.10+ and enable 'Add python.exe to PATH', then confirm `python --version` works."
-    );
+  if (!(await canRunCommand("powershell", ["-Command", "$PSVersionTable.PSVersion.ToString()"]))) {
+    missing.push("Windows PowerShell 사용 가능 상태 확인");
   }
 
-  if (!(await canRunCommand("cmd", ["/c", "npm", "--version"]))) {
-    missing.push("npm is not available. Install Node.js 20+ and confirm `npm --version` works in a new terminal.");
+  if (!(await canRunCommand("cmd", ["/c", "npm", "--version"])) && false) {
+    missing.push("Node.js 20+ 설치 후 `npm --version` 확인");
   }
 
   if (missing.length > 0) {
-    throw new Error(`Missing prerequisites for IOPaint:\n- ${missing.join("\n- ")}`);
+    throw new Error(`IOPaint 사전 준비 항목이 부족합니다.\n- ${missing.join("\n- ")}`);
   }
-}
-
-async function getSystemPython(): Promise<PythonCommand> {
-  if (resolvedPython) {
-    return resolvedPython;
-  }
-
-  if (await canRunCommand("python", ["--version"])) {
-    resolvedPython = { command: "python", argsPrefix: [], label: "python" };
-    appendLog("시스템 Python 실행기로 python 을 사용합니다.");
-    return resolvedPython;
-  }
-
-  if (await canRunCommand("py", ["-3", "--version"])) {
-    resolvedPython = { command: "py", argsPrefix: ["-3"], label: "py -3" };
-    appendLog("시스템 Python 실행기로 py -3 를 사용합니다.");
-    return resolvedPython;
-  }
-
-  throw new Error("Python 3 실행기를 찾을 수 없습니다. python 또는 py -3 명령이 필요합니다.");
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function httpReachable(url: string): Promise<boolean> {
@@ -238,11 +238,42 @@ async function httpReachable(url: string): Promise<boolean> {
   });
 }
 
+async function ensureNodeBuildTooling(): Promise<void> {
+  if (await canRunCommand("cmd", ["/c", "npm", "--version"])) {
+    return;
+  }
+  throw new Error("IOPaint web_app build requires Node.js/npm. Install Node.js 20+ and confirm `npm --version`.");
+}
+
+async function isPortFree(port: number): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", () => resolve(false));
+    server.listen(port, IOPAINT_HOST, () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+async function allocateServicePort(preferredPort = IOPAINT_DEFAULT_PORT): Promise<number> {
+  const maxAttempts = 20;
+  for (let offset = 0; offset < maxAttempts; offset += 1) {
+    const candidate = preferredPort + offset;
+    if (await isPortFree(candidate)) {
+      currentPort = candidate;
+      currentUrl = `http://${IOPAINT_HOST}:${candidate}`;
+      return candidate;
+    }
+  }
+  throw new Error(`No available IOPaint port found between ${preferredPort} and ${preferredPort + maxAttempts - 1}.`);
+}
+
 async function ensureRepo(): Promise<void> {
   const { runtimeRoot, repoDir } = getRuntimePaths();
   const gitDir = path.join(repoDir, ".git");
   if (await fs.pathExists(gitDir)) {
-    appendLog("IOPaint 저장소가 이미 존재합니다. 기존 복제본을 사용합니다.");
+    appendLog("IOPaint 저장소를 재사용합니다.");
     return;
   }
 
@@ -250,6 +281,7 @@ async function ensureRepo(): Promise<void> {
   setStatus({
     phase: "cloning",
     message: "IOPaint 저장소를 가져오는 중...",
+    installed: false,
     ready: false,
     managed: false,
     error: null
@@ -262,27 +294,58 @@ async function ensureRepo(): Promise<void> {
   await runCommand("git", ["clone", "--depth", "1", IOPAINT_REPO_URL, repoDir], runtimeRoot);
 }
 
-async function ensureVenv(): Promise<void> {
-  const { runtimeRoot, venvDir, venvPython } = getRuntimePaths();
-  if (await fs.pathExists(venvPython)) {
-    appendLog("IOPaint 전용 Python 가상환경이 이미 존재합니다.");
+async function ensureEmbeddedPython(): Promise<void> {
+  const { runtimeRoot, pythonDir, pythonExe, pythonPth } = getRuntimePaths();
+  if (await fs.pathExists(pythonExe)) {
+    appendLog("IOPaint 내장 Python을 재사용합니다.");
     return;
   }
 
+  const arch = process.arch === "x64" ? "amd64" : "win32";
+  const zipName = `python-${EMBEDDED_PYTHON_VERSION}-embed-${arch}.zip`;
+  const zipPath = path.join(runtimeRoot, zipName);
+  const pythonUrl = `https://www.python.org/ftp/python/${EMBEDDED_PYTHON_VERSION}/${zipName}`;
+  const getPipPath = path.join(runtimeRoot, "get-pip.py");
+
   setStatus({
     phase: "creating_venv",
-    message: "IOPaint 전용 Python 환경을 만드는 중...",
+    message: "IOPaint용 내장 Python을 준비하는 중...",
+    installed: false,
     ready: false,
     managed: false,
     error: null
   });
 
-  const systemPython = await getSystemPython();
-  await runCommand(systemPython.command, [...systemPython.argsPrefix, "-m", "venv", venvDir], runtimeRoot);
-}
+  await runCommand(
+    "powershell",
+    ["-Command", `Invoke-WebRequest -Uri ${psQuote(pythonUrl)} -OutFile ${psQuote(zipPath)} -UseBasicParsing`],
+    runtimeRoot
+  );
+  await fs.ensureDir(pythonDir);
+  await runCommand(
+    "powershell",
+    ["-Command", `Expand-Archive -Path ${psQuote(zipPath)} -DestinationPath ${psQuote(pythonDir)} -Force`],
+    runtimeRoot
+  );
+  await fs.remove(zipPath);
 
-async function directoryHasIndexHtml(dir: string): Promise<boolean> {
-  return await fs.pathExists(path.join(dir, "index.html"));
+  if (await fs.pathExists(pythonPth)) {
+    const current = await fs.readFile(pythonPth, "utf8");
+    const normalized = current.includes("import site") ? current : current.replace("#import site", "import site");
+    const withSitePackages = normalized.includes("Lib\\site-packages")
+      ? normalized
+      : `${normalized}\nLib\\site-packages`;
+    await fs.writeFile(pythonPth, withSitePackages, "utf8");
+  }
+
+  await fs.ensureDir(path.join(pythonDir, "Lib", "site-packages"));
+  await runCommand(
+    "powershell",
+    ["-Command", `Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile ${psQuote(getPipPath)} -UseBasicParsing`],
+    runtimeRoot
+  );
+  await runCommand(pythonExe, [getPipPath, "--no-warn-script-location"], runtimeRoot);
+  await fs.remove(getPipPath);
 }
 
 async function webAppDirectoryLooksBuilt(dir: string): Promise<boolean> {
@@ -300,7 +363,7 @@ async function ensureWebAppBuild(): Promise<void> {
     return;
   }
 
-  appendLog("IOPaint web_app 빌드 산출물이 없어 프론트엔드 빌드를 수행합니다.");
+  appendLog("IOPaint web_app를 빌드합니다.");
   await runCommand("cmd", ["/c", "npm", "install"], repoWebAppSourceDir);
   await runCommand("cmd", ["/c", "npm", "run", "build"], repoWebAppSourceDir);
 }
@@ -316,6 +379,7 @@ async function ensureWebAppAssets(): Promise<void> {
         : null;
 
   if (!preferredSource) {
+    await ensureNodeBuildTooling();
     await ensureWebAppBuild();
     preferredSource = await webAppDirectoryLooksBuilt(repoWebAppDistDir) ? repoWebAppDistDir : null;
   }
@@ -324,46 +388,52 @@ async function ensureWebAppAssets(): Promise<void> {
     throw new Error("IOPaint web_app 정적 파일을 찾지 못했습니다.");
   }
 
-  const targets = [packageWebAppDir, repoWebAppDir];
-  for (const target of targets) {
+  for (const target of [packageWebAppDir, repoWebAppDir]) {
     if (await webAppDirectoryLooksBuilt(target)) {
       continue;
     }
     await fs.remove(target);
     await fs.ensureDir(path.dirname(target));
     await fs.copy(preferredSource, target, { overwrite: true });
-    appendLog(`IOPaint web_app 자산을 복구했습니다: ${target}`);
+    appendLog(`web_app 자산을 복구했습니다: ${target}`);
   }
 }
 
 async function installIopaint(): Promise<void> {
-  const { runtimeRoot, modelDir, repoDir, venvPython } = getRuntimePaths();
-  const stampPath = path.join(runtimeRoot, "install.stamp");
-  if (await fs.pathExists(stampPath)) {
-    appendLog("IOPaint 파이썬 패키지가 이미 설치되어 있습니다.");
+  const { runtimeRoot, modelDir, repoDir, pythonExe, installStamp } = getRuntimePaths();
+  if (await fs.pathExists(installStamp)) {
+    appendLog("IOPaint 설치 흔적이 있어 기존 환경을 확인합니다.");
     await ensureWebAppAssets();
     return;
   }
 
   setStatus({
     phase: "installing",
-    message: "IOPaint 의존성과 패키지를 설치하는 중...",
+    message: "IOPaint 패키지와 모델 환경을 설치하는 중...",
+    installed: false,
     ready: false,
     managed: false,
     error: null
   });
 
   await fs.ensureDir(modelDir);
-  await runCommand(venvPython, ["-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], runtimeRoot);
-  await runCommand(venvPython, ["-m", "pip", "install", "."], repoDir);
+  await runCommand(pythonExe, ["-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], runtimeRoot);
+  await runCommand(pythonExe, ["-m", "pip", "install", "."], repoDir);
   await ensureWebAppAssets();
-  await fs.writeFile(stampPath, new Date().toISOString(), "utf8");
+  await fs.writeFile(installStamp, new Date().toISOString(), "utf8");
+}
+
+async function installRuntime(): Promise<void> {
+  await ensurePrerequisites();
+  await ensureRepo();
+  await ensureEmbeddedPython();
+  await installIopaint();
 }
 
 async function waitForServiceReady(timeoutMs: number): Promise<boolean> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    if (await httpReachable(IOPAINT_URL)) {
+    if (await httpReachable(currentUrl)) {
       return true;
     }
     await wait(2000);
@@ -372,11 +442,14 @@ async function waitForServiceReady(timeoutMs: number): Promise<boolean> {
 }
 
 async function startManagedService(): Promise<void> {
-  const { modelDir, runtimeRoot, venvPython } = getRuntimePaths();
-  if (await httpReachable(IOPAINT_URL)) {
+  const { modelDir, runtimeRoot, pythonExe } = getRuntimePaths();
+  const port = await allocateServicePort();
+
+  if (await httpReachable(currentUrl)) {
     setStatus({
       phase: "ready",
-      message: "이미 실행 중인 IOPaint 서버를 감지했습니다.",
+      message: "기존 IOPaint 서버를 감지했습니다.",
+      installed: true,
       ready: true,
       managed: false,
       error: null
@@ -387,13 +460,14 @@ async function startManagedService(): Promise<void> {
   setStatus({
     phase: "starting",
     message: "IOPaint 서버를 시작하는 중...",
+    installed: true,
     ready: false,
     managed: true,
     error: null
   });
 
   serviceProcess = spawn(
-    venvPython,
+    pythonExe,
     [
       "-m",
       "iopaint",
@@ -403,7 +477,7 @@ async function startManagedService(): Promise<void> {
       "--host",
       IOPAINT_HOST,
       "--port",
-      String(IOPAINT_PORT),
+      String(port),
       "--model-dir",
       modelDir
     ],
@@ -420,6 +494,7 @@ async function startManagedService(): Promise<void> {
     setStatus({
       phase: "error",
       message: "IOPaint 서버 시작에 실패했습니다.",
+      installed: detectInstalledSync(),
       ready: false,
       managed: false,
       error: error.message
@@ -431,6 +506,7 @@ async function startManagedService(): Promise<void> {
     setStatus({
       phase: wasReady ? "error" : currentStatus.phase,
       message: wasReady ? "IOPaint 서버가 종료되었습니다." : currentStatus.message,
+      installed: detectInstalledSync(),
       ready: false,
       managed: false,
       error: wasReady ? `IOPaint exited with code ${code ?? "unknown"}` : currentStatus.error
@@ -450,6 +526,7 @@ async function startManagedService(): Promise<void> {
   setStatus({
     phase: "ready",
     message: "IOPaint 서버가 준비되었습니다.",
+    installed: true,
     ready: true,
     managed: true,
     error: null
@@ -460,47 +537,94 @@ export function getIOPaintStatus(): IOPaintStatus {
   return withRuntimePaths(currentStatus);
 }
 
-export async function ensureIOPaintReady(): Promise<IOPaintStatus> {
-  if (currentStatus.ready) {
+export async function ensureIOPaintInstalled(): Promise<IOPaintStatus> {
+  if (detectInstalledSync()) {
+    setStatus({
+      phase: currentStatus.ready ? currentStatus.phase : "idle",
+      message: currentStatus.ready ? currentStatus.message : "IOPaint 설치가 완료되었습니다.",
+      installed: true,
+      ready: currentStatus.ready,
+      managed: currentStatus.managed,
+      error: currentStatus.error
+    });
     return currentStatus;
   }
 
-  if (ensurePromise) {
-    return await ensurePromise;
+  if (installPromise) {
+    return await installPromise;
   }
 
-  ensurePromise = (async () => {
+  installPromise = (async () => {
     setStatus({
       phase: "checking",
-      message: "IOPaint 런타임을 점검하는 중...",
+      message: "IOPaint 설치 상태를 확인하는 중...",
+      installed: false,
       ready: false,
       managed: false,
       error: null
     });
 
     try {
-      await ensurePrerequisites();
-      await ensureRepo();
-      await ensureVenv();
-      await installIopaint();
-      await startManagedService();
+      await installRuntime();
+      setStatus({
+        phase: "idle",
+        message: "IOPaint 설치가 완료되었습니다.",
+        installed: true,
+        ready: false,
+        managed: false,
+        error: null
+      });
       return currentStatus;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus({
         phase: "error",
-        message: "IOPaint 자동 설정에 실패했습니다.",
+        message: "IOPaint 설치에 실패했습니다.",
+        installed: detectInstalledSync(),
         ready: false,
         managed: false,
         error: message
       });
       throw error;
     } finally {
-      ensurePromise = null;
+      installPromise = null;
     }
   })();
 
-  return await ensurePromise;
+  return await installPromise;
+}
+
+export async function ensureIOPaintReady(): Promise<IOPaintStatus> {
+  if (currentStatus.ready) {
+    return currentStatus;
+  }
+
+  if (startPromise) {
+    return await startPromise;
+  }
+
+  startPromise = (async () => {
+    try {
+      await ensureIOPaintInstalled();
+      await startManagedService();
+      return currentStatus;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus({
+        phase: "error",
+        message: "IOPaint 실행 준비에 실패했습니다.",
+        installed: detectInstalledSync(),
+        ready: false,
+        managed: false,
+        error: message
+      });
+      throw error;
+    } finally {
+      startPromise = null;
+    }
+  })();
+
+  return await startPromise;
 }
 
 export async function restartIOPaint(): Promise<IOPaintStatus> {
@@ -514,6 +638,7 @@ export async function restartIOPaint(): Promise<IOPaintStatus> {
   setStatus({
     phase: "idle",
     message: "IOPaint 서버를 다시 시작하는 중...",
+    installed: detectInstalledSync(),
     ready: false,
     managed: false,
     error: null
@@ -526,6 +651,7 @@ export async function shutdownIOPaint(): Promise<void> {
   if (!serviceProcess) {
     return;
   }
+
   const process = serviceProcess;
   serviceProcess = null;
   process.kill();

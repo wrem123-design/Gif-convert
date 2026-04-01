@@ -5,11 +5,20 @@ import { Worker } from "node:worker_threads";
 import os from "node:os";
 import sharp from "sharp";
 import {
+  ensureIOPaintInstalled,
   ensureIOPaintReady,
   getIOPaintStatus,
   restartIOPaint,
   shutdownIOPaint
 } from "./iopaintManager";
+import {
+  ensureMarkRemoverInstalled,
+  getMarkRemoverStatus,
+  previewMarkRemover,
+  runMarkRemover,
+  stopMarkRemoverTask,
+  shutdownMarkRemover
+} from "./markRemoverManager";
 
 interface WorkerRequest {
   id: string;
@@ -301,9 +310,6 @@ function createAppMenu(win: BrowserWindow): void {
 app.whenReady().then(async () => {
   const win = createWindow();
   createAppMenu(win);
-  void ensureIOPaintReady().catch(() => {
-    // Renderer reads the shared status stream and can surface the error.
-  });
 
   ipcMain.handle("dialog:pickProjectDir", async () => {
     const selected = await pickProjectDirDialog(win);
@@ -395,16 +401,19 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("app:getDefaultProjectDir", async () => ensureDefaultProjectDir());
   ipcMain.handle("iopaint:getStatus", async () => getIOPaintStatus());
+  ipcMain.handle("iopaint:ensureInstalled", async () => await ensureIOPaintInstalled());
   ipcMain.handle("iopaint:ensureStarted", async () => await ensureIOPaintReady());
   ipcMain.handle("iopaint:restart", async () => await restartIOPaint());
+  ipcMain.handle("markremover:getStatus", async () => getMarkRemoverStatus());
+  ipcMain.handle("markremover:ensureInstalled", async () => await ensureMarkRemoverInstalled());
+  ipcMain.handle("markremover:preview", async (_event, payload) => await previewMarkRemover(payload));
+  ipcMain.handle("markremover:run", async (_event, payload) => await runMarkRemover(payload));
+  ipcMain.handle("markremover:stop", async () => await stopMarkRemoverTask());
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       const nextWin = createWindow();
       createAppMenu(nextWin);
-      void ensureIOPaintReady().catch(() => {
-        // Renderer reads the shared status stream and can surface the error.
-      });
     }
   });
 });
@@ -417,4 +426,5 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   void shutdownIOPaint();
+  void shutdownMarkRemover();
 });
