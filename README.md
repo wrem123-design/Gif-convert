@@ -1,93 +1,85 @@
-# Sprite Forge (Unity Asset Maker)
+# Sprite Studio
 
-Sprite Forge is a local-only desktop tool for importing animated sources, editing frame alignment/pivots/pixels, and exporting Unity-ready assets.
+Sprite Studio is a Windows desktop tool for sprite workflow tasks: import, frame cleanup, pixel editing, background removal, AI inpainting, and Unity-friendly export.
 
-## Tech stack
+## Highlights
+- Import GIF, video, PNG sequence, WebP, and spritesheets
+- Edit frame offsets, pivots, crop, and per-frame pixels
+- Use the built-in photo editor directly inside the app
+- Remove backgrounds, inpaint selected areas, and remove watermarks with AI tools
+- Export sprite sheets, PNG sequences, GIFs, and Unity metadata
+
+## Tech Stack
 - Electron + React + TypeScript + Vite
-- Zustand state
-- Canvas 2D viewport + onion skin
-- Worker-thread processing for imports/exports
-- Core pipeline in `/core`
-- Unity importer scripts in `/unity`
+- Zustand state management
+- Worker-based processing pipeline
+- Shared processing core in [`/core`](./core)
+- Unity integration scripts in [`/unity`](./unity)
 
-## Repository layout
-- `/app` Electron app (main/preload/renderer)
-- `/core` Processing pipeline + tests
-- `/unity` Unity Editor integration scripts
-- `/docs` Architecture and schema docs
-- `/samples` Sample export artifact
+## Repository Layout
+- [`/app`](./app): Electron app
+- [`/core`](./core): shared processing pipeline
+- [`/unity`](./unity): Unity importer and editor scripts
+- [`/docs`](./docs): supporting documentation
+- [`/samples`](./samples): sample assets
 
 ## Requirements
-- Node.js 20+
 - Windows 10/11
+- Node.js 20+
 - Git for Windows
-- Python 3.10+
 
-## Commands
-From repo root:
+Notes:
+- The app prepares its embedded Python runtime automatically for the AI tools.
+- First-time AI setup can take time because models and packages are downloaded locally.
+
+## Development
+From the repository root:
 
 ```bash
 npm install
 npm run dev
 npm run build
 npm run test
+```
+
+## Packaging
+From the repository root:
+
+```bash
 npm run package
 npm run package:portable
 ```
 
-## One-Click Run
-- Run `run-single.bat` from repo root.
-- Behavior:
-  - Installs dependencies if `node_modules` is missing.
-  - Always deletes previous runtime/build artifacts (`core/dist`, `app/dist`, `app/release`).
-  - Always rebuilds latest portable package (`npm run package:portable`).
-  - Launches the freshly built EXE automatically.
+Output location:
+- Portable build: [`app/release`](./app/release)
 
-## IOPaint prerequisites
-- The `IOPaint` tab is not a static bundled page.
-- On first use the app clones the IOPaint repo, prepares an embedded Python runtime, installs the package, recovers `web_app` if needed, and starts a local loopback server on an available port.
-- Before opening that tab, confirm these commands work in a new terminal:
-  - `git --version`
-  - `npm --version`
-- Detailed setup guide: `docs/IOPAINT_SETUP.md`
+## Quick Run
+- Run [`run-single.bat`](./run-single.bat) from the repository root.
+- It installs dependencies when needed, rebuilds the app, creates the latest portable package, and launches it.
 
-## MVP features
-- Import: GIF, MP4/WebM, PNG sequence, spritesheet, WebP
-- Sprite tab:
-  - Sprite sheet upload
-  - Auto background transparency
-  - Auto slicing for frame timeline
-  - Per-frame pixel editing + live preview
-- Timeline:
-  - Drag reorder
-  - Duplicate/delete
-  - Per-frame delay edits
-  - Loop mode: loop/once/pingpong/reverse
-- Pixel tab (lite):
-  - Pencil, eraser, eyedropper, fill
-  - Rect selection + move/copy/paste
-  - Previous-frame overlay
-- Export tab:
-  - Sprite sheet (default), PNG sequence, GIF
-  - `meta.json` for Unity
-- Unity importer:
-  - Auto-slice sprites
-  - Create/update AnimationClip + AnimatorController
-  - Optional Prefab
-  - Idempotent outputs under `UnityGenerated/`
+## AI Tools
+The `AI Edit` screen includes:
+- IOPaint for inpainting
+- AI watermark removal
 
-## Shortcuts
-- `Space`: play/pause
-- `Ctrl+Z` / `Ctrl+Y`: undo/redo
-- `Left` / `Right`: prev/next frame
-- `Ctrl+C` / `Ctrl+V`: duplicate selected frame(s) in timeline, copy/paste in Pixel tab
-- `Delete`: delete selected frames
-- `Wheel`: zoom
-- `Middle drag` or `Space+drag`: pan
+First use requirements:
+- `git --version`
+- `npm --version`
 
-## Local-only policy
+The app installs and manages the remaining runtime components on its own.
+
+## Release Page
+GitHub Releases:
+- https://github.com/wrem123-design/Gif-convert/releases
+
+## Local-Only Behavior
 - No telemetry
 - No analytics
-- No runtime network calls
+- AI runtimes and downloaded assets are stored locally on the user's PC
 
-See `docs/ARCHITECTURE.md`, `docs/JSON_SCHEMA.md`, `docs/ASSUMPTIONS.md`, and `docs/UNITY_IMPORT_GUIDE.md`.
+## Related Docs
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
+- [`docs/JSON_SCHEMA.md`](./docs/JSON_SCHEMA.md)
+- [`docs/ASSUMPTIONS.md`](./docs/ASSUMPTIONS.md)
+- [`docs/UNITY_IMPORT_GUIDE.md`](./docs/UNITY_IMPORT_GUIDE.md)
+- [`docs/IOPAINT_SETUP.md`](./docs/IOPAINT_SETUP.md)
