@@ -15,6 +15,7 @@ const getStore = () => {
 const TOOL_ID = "sprite-forge-cut-move-tool";
 const TOOL_STYLE_ID = "sprite-forge-cut-move-style";
 const TOOL_ACTIVE_CLASS = "sprite-forge-cut-move-tool-active";
+const TOOL_ICON_URL = new URL("./assets/icons/tool-Arrange.svg", window.location.href).toString();
 const originalCommitKey = "__spriteForgeOriginalStoreCommit";
 const isToolActive = () => window.__spriteForgeCutMoveToolActive === true;
 const setToolActive = (next) => {
@@ -59,6 +60,48 @@ const getSelectionBounds = (points) => {
 };
 
 const shiftSelection = (points, dx, dy) => [points.map((point) => ({ x: point.x + dx, y: point.y + dy }))];
+const buildSelectionPath = (ctx, points) => {
+  if (!ctx || !Array.isArray(points) || points.length === 0) {
+    return false;
+  }
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let index = 1; index < points.length; index += 1) {
+    ctx.lineTo(points[index].x, points[index].y);
+  }
+  ctx.closePath();
+  return true;
+};
+
+const cloneCanvas = (source) => {
+  if (!(source instanceof HTMLCanvasElement)) {
+    return null;
+  }
+  const copy = document.createElement("canvas");
+  copy.width = source.width;
+  copy.height = source.height;
+  const ctx = copy.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+  ctx.drawImage(source, 0, 0);
+  return copy;
+};
+
+const fillSelectionOnLayer = (layer, points, fillStyle) => {
+  const canvas = cloneCanvas(layer == null ? void 0 : layer.source);
+  const ctx = canvas == null ? void 0 : canvas.getContext("2d");
+  if (!canvas || !ctx || !buildSelectionPath(ctx, points)) {
+    return null;
+  }
+  ctx.save();
+  buildSelectionPath(ctx, points);
+  ctx.clip();
+  ctx.fillStyle = fillStyle || "rgba(0, 0, 0, 0)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+  return canvas;
+};
 const looksLikeFloatingLayer = (layer, bounds) => {
   if (!layer || !bounds) {
     return false;
@@ -86,6 +129,47 @@ const runWithoutNotifications = async (store, callback) => {
   } finally {
     window.__spriteForgeSuppressCutMoveNotification = false;
   }
+};
+
+const ensureFloatingSelection = async (store, activeDocument, activeLayer, activeLayerIndex, selectionPoints, bounds) => {
+  if (!store || !activeDocument || !activeLayer || activeLayerIndex < 0 || !selectionPoints || !bounds) {
+    return null;
+  }
+
+  if (looksLikeFloatingLayer(activeLayer, bounds)) {
+    store.commit("setActiveTool", { tool: "move", document: activeDocument });
+    return { document: activeDocument, layerIndex: activeLayerIndex };
+  }
+
+  await store.dispatch("requestSelectionCopy", { merged: false, isCut: false });
+
+  const filledSource = fillSelectionOnLayer(activeLayer, selectionPoints, store.getters == null ? void 0 : store.getters.activeColor);
+  if (filledSource) {
+    store.commit("updateLayer", {
+      index: activeLayerIndex,
+      opts: {
+        source: filledSource
+      }
+    });
+  } else {
+    await store.dispatch("deleteInSelection");
+  }
+
+  await store.dispatch("pasteSelection");
+
+  const nextDocument = store.getters.activeDocument;
+  const nextLayerIndex = nextDocument.layers.length - 1;
+  store.commit("updateLayer", {
+    index: nextLayerIndex,
+    opts: {
+      left: bounds.left,
+      top: bounds.top
+    }
+  });
+  store.commit("setActiveLayerIndex", nextLayerIndex);
+  store.commit("setActiveSelection", shiftSelection(selectionPoints, 0, 0));
+  store.commit("setActiveTool", { tool: "move", document: nextDocument });
+  return { document: nextDocument, layerIndex: nextLayerIndex };
 };
 
 const getToolbarButtons = () => {
@@ -139,9 +223,7 @@ const ensureToolButton = () => {
       #\${TOOL_ID}.\${TOOL_ACTIVE_CLASS} {
         box-shadow: inset 0 0 0 2px #17d9ff;
       }
-      #\${TOOL_ID} svg {
-        width: 18px;
-        height: 18px;
+      #\${TOOL_ID} img {
         pointer-events: none;
       }
     \`;
@@ -159,26 +241,48 @@ const ensureToolButton = () => {
     return null;
   }
 
-  const button = anchor.cloneNode(false);
+  const button = anchor.cloneNode(true);
   button.id = TOOL_ID;
   button.classList.remove("active");
   button.classList.remove(TOOL_ACTIVE_CLASS);
   button.title = "자르기 이동 도구";
   button.setAttribute("aria-label", "자르기 이동 도구");
   button.setAttribute("aria-pressed", "false");
-  button.innerHTML = \`
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M8 4v16"></path>
-      <path d="M4 8h8"></path>
-      <path d="M10 14l7-7"></path>
-      <path d="M14 10h3v3"></path>
-      <path d="M10 18h8"></path>
-    </svg>
-  \`;
-  button.addEventListener("click", (event) => {
+  const icon = button.querySelector("img");
+  if (icon) {
+    icon.src = TOOL_ICON_URL;
+    icon.alt = "";
+    icon.draggable = false;
+    icon.setAttribute("aria-hidden", "true");
+  } else {
+    const fallbackIcon = document.createElement("img");
+    fallbackIcon.src = TOOL_ICON_URL;
+    fallbackIcon.alt = "";
+    fallbackIcon.draggable = false;
+    fallbackIcon.setAttribute("aria-hidden", "true");
+    button.replaceChildren(fallbackIcon);
+  }
+  button.addEventListener("click", async (event) => {
     event.preventDefault();
     event.stopPropagation();
-    setToolActive(!isToolActive());
+    const nextActive = !isToolActive();
+    setToolActive(nextActive);
+    const store = getStore();
+    const activeDocument = store && store.getters ? store.getters.activeDocument : null;
+    const activeLayer = store && store.getters ? store.getters.activeLayer : null;
+    const activeLayerIndex = store && store.getters ? store.getters.activeLayerIndex : -1;
+    const selectionPoints = activeDocument ? getSelectionPoints(activeDocument.activeSelection) : null;
+    const bounds = getSelectionBounds(selectionPoints);
+    if (!nextActive || !store || !activeDocument) {
+      return;
+    }
+    if (selectionPoints && bounds) {
+      await runWithoutNotifications(store, async () => {
+        await ensureFloatingSelection(store, activeDocument, activeLayer, activeLayerIndex, selectionPoints, bounds);
+      });
+    } else {
+      store.commit("setActiveTool", { tool: "selection", document: activeDocument });
+    }
   });
   anchor.parentElement.insertBefore(button, anchor);
   return button;
@@ -208,6 +312,15 @@ const ensurePatched = async () => {
     const selectionPoints = activeDocument ? getSelectionPoints(activeDocument.activeSelection) : null;
     const bounds = getSelectionBounds(selectionPoints);
     const isDeleteKey = event.key === "Delete" || event.key === "Backspace";
+    const isEscapeKey = event.key === "Escape";
+
+    if (isEscapeKey && store && activeDocument && selectionPoints) {
+      event.preventDefault();
+      event.stopPropagation();
+      await store.dispatch("clearSelection");
+      setToolActive(false);
+      return;
+    }
 
     if (isDeleteKey && store && activeDocument && activeLayer && selectionPoints && bounds) {
       event.preventDefault();
@@ -222,7 +335,7 @@ const ensurePatched = async () => {
     const stepX = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
     const stepY = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
     if (stepX === 0 && stepY === 0) {
-      if (event.key === "Escape") {
+      if (isEscapeKey) {
         setToolActive(false);
       }
       return;
@@ -240,9 +353,25 @@ const ensurePatched = async () => {
     const targetLeft = bounds.left + deltaX;
     const targetTop = bounds.top + deltaY;
 
-    if (!event.altKey && looksLikeFloatingLayer(activeLayer, bounds) && activeLayerIndex >= 0) {
+    let workingDocument = activeDocument;
+    let workingLayer = activeLayer;
+    let workingLayerIndex = activeLayerIndex;
+
+    if (!event.altKey && !looksLikeFloatingLayer(activeLayer, bounds)) {
+      const materialized = await runWithoutNotifications(store, async () =>
+        ensureFloatingSelection(store, activeDocument, activeLayer, activeLayerIndex, selectionPoints, bounds)
+      );
+      if (!materialized) {
+        return;
+      }
+      workingDocument = materialized.document;
+      workingLayerIndex = materialized.layerIndex;
+      workingLayer = workingDocument.layers[workingLayerIndex];
+    }
+
+    if (!event.altKey && looksLikeFloatingLayer(workingLayer, bounds) && workingLayerIndex >= 0) {
       store.commit("updateLayer", {
-        index: activeLayerIndex,
+        index: workingLayerIndex,
         opts: {
           left: targetLeft,
           top: targetTop
@@ -272,7 +401,7 @@ const ensurePatched = async () => {
     });
     store.commit("setActiveLayerIndex", nextLayerIndex);
     store.commit("setActiveSelection", shiftSelection(selectionPoints, deltaX, deltaY));
-    store.commit("setActiveTool", { tool: "selection", document: nextDocument });
+    store.commit("setActiveTool", { tool: "move", document: nextDocument });
 
     const editor = mod.y();
     editor && editor.interactionPane && editor.interactionPane.stayOnTop && editor.interactionPane.stayOnTop();

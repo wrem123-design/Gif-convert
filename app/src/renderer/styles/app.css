@@ -1516,6 +1516,35 @@ body.workspace-resizing {
   padding: 6px 2px 0;
 }
 
+.iopaint-guide-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgba(91, 156, 246, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.iopaint-guide-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.iopaint-guide-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-primary);
+}
+
+.iopaint-guide-note {
+  margin: 0;
+}
+
 .iopaint-status-card {
   display: flex;
   align-items: flex-start;
@@ -1533,6 +1562,10 @@ body.workspace-resizing {
   flex-direction: column;
   gap: 4px;
   max-width: 720px;
+}
+
+.iopaint-status-error {
+  white-space: pre-wrap;
 }
 
 .iopaint-status-badge {

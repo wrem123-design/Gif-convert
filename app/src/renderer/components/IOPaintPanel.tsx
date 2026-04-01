@@ -25,6 +25,12 @@ export function IOPaintPanel(): JSX.Element {
   const [runtimePanelOpen, setRuntimePanelOpen] = useState(false);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const wasReadyRef = useRef(false);
+  const installChecklist = [
+    t("iopaint_requirement_git"),
+    t("iopaint_requirement_python"),
+    t("iopaint_requirement_node"),
+    t("iopaint_requirement_network")
+  ];
 
   useEffect(() => {
     let mounted = true;
@@ -139,6 +145,19 @@ export function IOPaintPanel(): JSX.Element {
         </div>
       </div>
 
+      <div className="iopaint-guide-card">
+        <div className="iopaint-guide-copy">
+          <strong>{t("iopaint_requirements_title")}</strong>
+          <p className="muted">{t("iopaint_requirements_desc")}</p>
+        </div>
+        <ul className="iopaint-guide-list">
+          {installChecklist.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+        <p className="muted iopaint-guide-note">{t("iopaint_requirement_note")}</p>
+      </div>
+
       {runtimePanelOpen ? (
         <>
           <div className="iopaint-status-card">
@@ -147,7 +166,9 @@ export function IOPaintPanel(): JSX.Element {
                 {status.ready ? t("iopaint_status_ready") : t("iopaint_status_setting")}
               </span>
               <strong>{status.message}</strong>
-              <p className="muted">{status.error ?? t("iopaint_status_desc")}</p>
+              <p className={`muted ${status.error ? "iopaint-status-error" : ""}`}>
+                {status.error ?? t("iopaint_status_desc")}
+              </p>
             </div>
             <div className="iopaint-meta-grid">
               <div className="iopaint-meta-item">

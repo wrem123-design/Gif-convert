@@ -177,6 +177,29 @@ async function canRunCommand(command: string, args: string[]): Promise<boolean> 
   });
 }
 
+async function ensurePrerequisites(): Promise<void> {
+  const missing: string[] = [];
+
+  if (!(await canRunCommand("git", ["--version"]))) {
+    missing.push("Git is not available. Install Git for Windows and confirm `git --version` works in a new terminal.");
+  }
+
+  const hasPython = (await canRunCommand("python", ["--version"])) || (await canRunCommand("py", ["-3", "--version"]));
+  if (!hasPython) {
+    missing.push(
+      "Python 3 is not available. Install Python 3.10+ and enable 'Add python.exe to PATH', then confirm `python --version` works."
+    );
+  }
+
+  if (!(await canRunCommand("cmd", ["/c", "npm", "--version"]))) {
+    missing.push("npm is not available. Install Node.js 20+ and confirm `npm --version` works in a new terminal.");
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`Missing prerequisites for IOPaint:\n- ${missing.join("\n- ")}`);
+  }
+}
+
 async function getSystemPython(): Promise<PythonCommand> {
   if (resolvedPython) {
     return resolvedPython;
@@ -456,6 +479,7 @@ export async function ensureIOPaintReady(): Promise<IOPaintStatus> {
     });
 
     try {
+      await ensurePrerequisites();
       await ensureRepo();
       await ensureVenv();
       await installIopaint();

@@ -20,6 +20,8 @@ Sprite Forge is a local-only desktop tool for importing animated sources, editin
 ## Requirements
 - Node.js 20+
 - Windows 10/11
+- Git for Windows
+- Python 3.10+
 
 ## Commands
 From repo root:
@@ -40,6 +42,15 @@ npm run package:portable
   - Always deletes previous runtime/build artifacts (`core/dist`, `app/dist`, `app/release`).
   - Always rebuilds latest portable package (`npm run package:portable`).
   - Launches the freshly built EXE automatically.
+
+## IOPaint prerequisites
+- The `IOPaint` tab is not a static bundled page.
+- On first use the app clones the IOPaint repo, creates a Python venv, installs the package, builds `web_app`, and starts a local server.
+- Before opening that tab, confirm these commands work in a new terminal:
+  - `git --version`
+  - `python --version`
+  - `npm --version`
+- Detailed setup guide: `docs/IOPAINT_SETUP.md`
 
 ## MVP features
 - Import: GIF, MP4/WebM, PNG sequence, spritesheet, WebP
