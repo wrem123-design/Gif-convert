@@ -1,16 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import type { SpriteForgeApi } from "../../main/preload";
 
 type IOPaintStatus = Awaited<ReturnType<SpriteForgeApi["getIOPaintStatus"]>>;
+type IOPaintServerConfig = Awaited<ReturnType<SpriteForgeApi["getIOPaintServerConfig"]>>;
+type IOPaintModelInfo = Awaited<ReturnType<SpriteForgeApi["getCurrentIOPaintModel"]>>;
 type MarkRemoverStatus = Awaited<ReturnType<SpriteForgeApi["getMarkRemoverStatus"]>>;
 type MarkRemoverPreview = Awaited<ReturnType<SpriteForgeApi["previewMarkRemover"]>>;
 type ToolMode = "iopaint" | "markremover";
+type IOPaintViewMode = "native" | "full";
 type ForceFormat = "PNG" | "WEBP" | "JPG" | "MP4" | "AVI" | "";
 type InputSelectionKind = "" | "file" | "folder";
 
 const TOOL_MODE_KEY = "sprite_forge_ai_editor_mode_v1";
 const AI_EDITOR_PREFS_KEY = "sprite_forge_ai_editor_prefs_v1";
+const IOPAINT_VIEW_MODE_KEY = "sprite_studio_iopaint_view_mode_v1";
+const IOPAINT_EDITOR_PREFS_KEY = "sprite_studio_iopaint_editor_prefs_v1";
 
 interface AiEditorPrefs {
   inputPath: string;
@@ -24,6 +29,12 @@ interface AiEditorPrefs {
   detectionSkip: string;
   fadeIn: string;
   fadeOut: string;
+}
+
+interface NativeIOPaintPrefs {
+  brushSize: number;
+  prompt: string;
+  selectedModel: string;
 }
 
 const DEFAULT_IOPAINT_STATUS: IOPaintStatus = {
@@ -71,6 +82,44 @@ function loadToolMode(): ToolMode {
     return saved === "markremover" ? "markremover" : "iopaint";
   } catch {
     return "iopaint";
+  }
+}
+
+function loadIOPaintViewMode(): IOPaintViewMode {
+  if (typeof window === "undefined") {
+    return "native";
+  }
+  try {
+    return window.localStorage.getItem(IOPAINT_VIEW_MODE_KEY) === "full" ? "full" : "native";
+  } catch {
+    return "native";
+  }
+}
+
+function loadNativeIOPaintPrefs(): NativeIOPaintPrefs {
+  const defaults: NativeIOPaintPrefs = {
+    brushSize: 32,
+    prompt: "",
+    selectedModel: ""
+  };
+
+  if (typeof window === "undefined") {
+    return defaults;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(IOPAINT_EDITOR_PREFS_KEY);
+    if (!raw) {
+      return defaults;
+    }
+    const parsed = JSON.parse(raw) as Partial<NativeIOPaintPrefs>;
+    return {
+      brushSize: typeof parsed.brushSize === "number" && Number.isFinite(parsed.brushSize) ? parsed.brushSize : defaults.brushSize,
+      prompt: typeof parsed.prompt === "string" ? parsed.prompt : defaults.prompt,
+      selectedModel: typeof parsed.selectedModel === "string" ? parsed.selectedModel : defaults.selectedModel
+    };
+  } catch {
+    return defaults;
   }
 }
 
@@ -145,14 +194,48 @@ function getBaseName(value: string): string {
   return index >= 0 ? normalized.slice(index + 1) : normalized;
 }
 
+function loadImageElement(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("이미지를 불러오지 못했습니다."));
+    image.src = dataUrl;
+  });
+}
+
+function getCanvasPoint(canvas: HTMLCanvasElement, clientX: number, clientY: number): { x: number; y: number } {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / Math.max(rect.width, 1);
+  const scaleY = canvas.height / Math.max(rect.height, 1);
+  return {
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY
+  };
+}
+
 export function IOPaintPanel(): JSX.Element {
   const { t } = useI18n();
   const initialPrefs = useMemo(() => loadAiEditorPrefs(), []);
+  const initialNativePrefs = useMemo(() => loadNativeIOPaintPrefs(), []);
   const [mode, setMode] = useState<ToolMode>(loadToolMode);
+  const [iopaintViewMode, setIopaintViewMode] = useState<IOPaintViewMode>(loadIOPaintViewMode);
   const [status, setStatus] = useState<IOPaintStatus>(DEFAULT_IOPAINT_STATUS);
+  const [serverConfig, setServerConfig] = useState<IOPaintServerConfig | null>(null);
+  const [currentModel, setCurrentModel] = useState<IOPaintModelInfo | null>(null);
   const [aiStatus, setAiStatus] = useState<MarkRemoverStatus>(DEFAULT_MARKREMOVER_STATUS);
-  const [frameKey, setFrameKey] = useState(0);
+  const [frameUrl, setFrameUrl] = useState("");
   const [frameLoaded, setFrameLoaded] = useState(false);
+  const [nativeImagePath, setNativeImagePath] = useState("");
+  const [nativeOriginalDataUrl, setNativeOriginalDataUrl] = useState("");
+  const [nativeWorkingDataUrl, setNativeWorkingDataUrl] = useState("");
+  const [nativeBrushSize, setNativeBrushSize] = useState(initialNativePrefs.brushSize);
+  const [nativePrompt, setNativePrompt] = useState(initialNativePrefs.prompt);
+  const [selectedModel, setSelectedModel] = useState(initialNativePrefs.selectedModel);
+  const [nativeBusy, setNativeBusy] = useState(false);
+  const [nativeError, setNativeError] = useState<string | null>(null);
+  const [nativeSeed, setNativeSeed] = useState<string | null>(null);
+  const [nativeMaskDirty, setNativeMaskDirty] = useState(false);
+  const [nativeEraseMode, setNativeEraseMode] = useState(false);
   const [inputPath, setInputPath] = useState(initialPrefs.inputPath);
   const [inputKind, setInputKind] = useState<InputSelectionKind>(initialPrefs.inputKind);
   const [outputPath, setOutputPath] = useState(initialPrefs.outputPath);
@@ -167,7 +250,13 @@ export function IOPaintPanel(): JSX.Element {
   const [preview, setPreview] = useState<MarkRemoverPreview | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
-  const wasReadyRef = useRef(false);
+  const frameShellRef = useRef<HTMLDivElement | null>(null);
+  const nativeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const nativeMaskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const nativeImageRef = useRef<HTMLImageElement | null>(null);
+  const nativeMaskDirtyRef = useRef(false);
+  const nativeDrawingRef = useRef(false);
+  const nativeLastPointRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     try {
@@ -176,6 +265,26 @@ export function IOPaintPanel(): JSX.Element {
       // Ignore storage write failures.
     }
   }, [mode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(IOPAINT_VIEW_MODE_KEY, iopaintViewMode);
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [iopaintViewMode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(IOPAINT_EDITOR_PREFS_KEY, JSON.stringify({
+        brushSize: nativeBrushSize,
+        prompt: nativePrompt,
+        selectedModel
+      } satisfies NativeIOPaintPrefs));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [nativeBrushSize, nativePrompt, selectedModel]);
 
   useEffect(() => {
     try {
@@ -244,12 +353,16 @@ export function IOPaintPanel(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (status.ready && !wasReadyRef.current) {
-      setFrameLoaded(false);
-      setFrameKey((value) => value + 1);
+    if (status.ready && status.url) {
+      setFrameUrl((current) => {
+        if (current === status.url) {
+          return current;
+        }
+        setFrameLoaded(false);
+        return status.url;
+      });
     }
-    wasReadyRef.current = status.ready;
-  }, [status.ready]);
+  }, [status.ready, status.url]);
 
   useEffect(() => {
     if (!status.installed || status.ready || status.phase !== "idle") {
@@ -261,9 +374,250 @@ export function IOPaintPanel(): JSX.Element {
   }, [status.installed, status.ready, status.phase]);
 
   useEffect(() => {
+    if (!status.ready) {
+      return;
+    }
+    void (async () => {
+      try {
+        const [nextConfig, nextModel] = await Promise.all([
+          window.spriteForge.getIOPaintServerConfig() as Promise<IOPaintServerConfig>,
+          window.spriteForge.getCurrentIOPaintModel() as Promise<IOPaintModelInfo>
+        ]);
+        setServerConfig(nextConfig);
+        setCurrentModel(nextModel);
+        setSelectedModel((current) => current || nextModel.name);
+      } catch (error) {
+        setNativeError(error instanceof Error ? error.message : String(error));
+      }
+    })();
+  }, [status.ready]);
+
+  useEffect(() => {
     setPreview(null);
     setActionError(null);
   }, [inputPath, detectionPrompt, maxBBoxPercent]);
+
+  const redrawNativeCanvas = (): void => {
+    const canvas = nativeCanvasRef.current;
+    const image = nativeImageRef.current;
+    if (!canvas || !image) {
+      return;
+    }
+
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0);
+
+    const maskCanvas = nativeMaskCanvasRef.current;
+    if (maskCanvas && nativeMaskDirtyRef.current) {
+      context.save();
+      context.drawImage(maskCanvas, 0, 0);
+      context.globalCompositeOperation = "source-atop";
+      context.fillStyle = "rgba(230, 74, 25, 0.32)";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.restore();
+    }
+  };
+
+  const clearNativeMask = (): void => {
+    const maskCanvas = nativeMaskCanvasRef.current;
+    if (!maskCanvas) {
+      return;
+    }
+    const context = maskCanvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+    context.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+    nativeMaskDirtyRef.current = false;
+    setNativeMaskDirty(false);
+    redrawNativeCanvas();
+  };
+
+  const loadNativeEditorImage = async (filePath: string): Promise<void> => {
+    const dataUrl = await window.spriteForge.readImageDataUrl(filePath);
+    const image = await loadImageElement(dataUrl);
+    nativeImageRef.current = image;
+    setNativeImagePath(filePath);
+    setNativeOriginalDataUrl(dataUrl);
+    setNativeWorkingDataUrl(dataUrl);
+    setNativeSeed(null);
+    setNativeError(null);
+
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = image.naturalWidth;
+    maskCanvas.height = image.naturalHeight;
+    nativeMaskCanvasRef.current = maskCanvas;
+    nativeMaskDirtyRef.current = false;
+    setNativeMaskDirty(false);
+    setTimeout(() => redrawNativeCanvas(), 0);
+  };
+
+  const syncNativeWorkingImage = async (dataUrl: string, resetMask: boolean): Promise<void> => {
+    if (!dataUrl) {
+      return;
+    }
+    const image = await loadImageElement(dataUrl);
+    nativeImageRef.current = image;
+    if (!nativeMaskCanvasRef.current || resetMask) {
+      const maskCanvas = document.createElement("canvas");
+      maskCanvas.width = image.naturalWidth;
+      maskCanvas.height = image.naturalHeight;
+      nativeMaskCanvasRef.current = maskCanvas;
+    } else if (
+      nativeMaskCanvasRef.current.width !== image.naturalWidth
+      || nativeMaskCanvasRef.current.height !== image.naturalHeight
+    ) {
+      nativeMaskCanvasRef.current.width = image.naturalWidth;
+      nativeMaskCanvasRef.current.height = image.naturalHeight;
+    }
+    if (resetMask) {
+      nativeMaskDirtyRef.current = false;
+      setNativeMaskDirty(false);
+    }
+    setTimeout(() => redrawNativeCanvas(), 0);
+  };
+
+  useEffect(() => {
+    if (!nativeWorkingDataUrl) {
+      return;
+    }
+    void syncNativeWorkingImage(nativeWorkingDataUrl, false);
+  }, [nativeWorkingDataUrl]);
+
+  const paintNativeMask = (from: { x: number; y: number }, to: { x: number; y: number }): void => {
+    const maskCanvas = nativeMaskCanvasRef.current;
+    if (!maskCanvas) {
+      return;
+    }
+    const context = maskCanvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+
+    context.save();
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.lineWidth = nativeBrushSize;
+    if (nativeEraseMode) {
+      context.globalCompositeOperation = "destination-out";
+      context.strokeStyle = "rgba(0,0,0,1)";
+    } else {
+      context.globalCompositeOperation = "source-over";
+      context.strokeStyle = "rgba(255,255,255,1)";
+    }
+    context.beginPath();
+    context.moveTo(from.x, from.y);
+    context.lineTo(to.x, to.y);
+    context.stroke();
+    context.restore();
+
+    nativeMaskDirtyRef.current = true;
+    setNativeMaskDirty(true);
+    redrawNativeCanvas();
+  };
+
+  const handleNativeCanvasPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+    if (!nativeImageRef.current || nativeBusy) {
+      return;
+    }
+    const canvas = event.currentTarget;
+    const point = getCanvasPoint(canvas, event.clientX, event.clientY);
+    nativeDrawingRef.current = true;
+    nativeLastPointRef.current = point;
+    canvas.setPointerCapture(event.pointerId);
+    paintNativeMask(point, point);
+  };
+
+  const handleNativeCanvasPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+    if (!nativeDrawingRef.current) {
+      return;
+    }
+    const canvas = event.currentTarget;
+    const point = getCanvasPoint(canvas, event.clientX, event.clientY);
+    const lastPoint = nativeLastPointRef.current ?? point;
+    paintNativeMask(lastPoint, point);
+    nativeLastPointRef.current = point;
+  };
+
+  const finishNativeStroke = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+    if (!nativeDrawingRef.current) {
+      return;
+    }
+    nativeDrawingRef.current = false;
+    nativeLastPointRef.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const pickNativeImage = async (): Promise<void> => {
+    const paths = await window.spriteForge.pickMediaPaths();
+    const nextInput = paths[0];
+    if (!nextInput) {
+      return;
+    }
+    await loadNativeEditorImage(nextInput);
+  };
+
+  const runNativeInpaint = (): void => {
+    if (!nativeWorkingDataUrl) {
+      setNativeError(t("iopaint_native_pick_image"));
+      return;
+    }
+    if (!nativeMaskDirty || !nativeMaskCanvasRef.current) {
+      setNativeError(t("iopaint_native_mask_required"));
+      return;
+    }
+
+    setNativeBusy(true);
+    setNativeError(null);
+    void window.spriteForge.runIOPaintInpaint({
+      imageDataUrl: nativeWorkingDataUrl,
+      maskDataUrl: nativeMaskCanvasRef.current.toDataURL("image/png"),
+      model: selectedModel || currentModel?.name || null,
+      prompt: nativePrompt.trim()
+    }).then((result) => {
+      setNativeWorkingDataUrl(result.imageDataUrl);
+      setNativeSeed(result.seed);
+      setCurrentModel((current) => current ? { ...current, name: selectedModel || current.name } : current);
+      clearNativeMask();
+    }).catch((error) => {
+      setNativeError(error instanceof Error ? error.message : String(error));
+    }).finally(() => {
+      setNativeBusy(false);
+    });
+  };
+
+  const saveNativeResult = (): void => {
+    if (!nativeImagePath || !nativeWorkingDataUrl) {
+      setNativeError(t("iopaint_native_pick_image"));
+      return;
+    }
+    setNativeBusy(true);
+    setNativeError(null);
+    void window.spriteForge.writeImageDataUrl({
+      filePath: nativeImagePath,
+      dataUrl: nativeWorkingDataUrl
+    }).catch((error) => {
+      setNativeError(error instanceof Error ? error.message : String(error));
+    }).finally(() => {
+      setNativeBusy(false);
+    });
+  };
+
+  const resetNativeResult = (): void => {
+    if (!nativeOriginalDataUrl) {
+      return;
+    }
+    setNativeWorkingDataUrl(nativeOriginalDataUrl);
+    clearNativeMask();
+    setNativeSeed(null);
+  };
 
   const installIOPaint = (): void => {
     void window.spriteForge.ensureIOPaintInstalled().catch(() => {
@@ -420,6 +774,56 @@ export function IOPaintPanel(): JSX.Element {
     }
   };
 
+  const forceFrameRelayout = (): void => {
+    const frame = frameRef.current;
+    const doc = frame?.contentDocument;
+    const win = frame?.contentWindow;
+    if (!frame || !doc || !win) {
+      return;
+    }
+
+    const root = doc.documentElement;
+    const body = doc.body;
+    root.style.width = "100%";
+    root.style.height = "100%";
+    body.style.width = "100%";
+    body.style.height = "100%";
+    body.style.minHeight = "100%";
+
+    win.dispatchEvent(new Event("resize"));
+  };
+
+  useEffect(() => {
+    if (!frameLoaded || iopaintViewMode !== "full") {
+      return;
+    }
+
+    const timers = [
+      window.setTimeout(() => forceFrameRelayout(), 0),
+      window.setTimeout(() => forceFrameRelayout(), 120),
+      window.setTimeout(() => forceFrameRelayout(), 320)
+    ];
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [frameLoaded, iopaintViewMode]);
+
+  useEffect(() => {
+    const shell = frameShellRef.current;
+    if (!shell || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      if (iopaintViewMode === "full" && frameLoaded) {
+        forceFrameRelayout();
+      }
+    });
+    observer.observe(shell);
+    return () => observer.disconnect();
+  }, [frameLoaded, iopaintViewMode]);
+
   const isInstallingAnything = isBusy(status.phase) || isBusy(aiStatus.phase);
   const setupNeeded = !status.installed || !aiStatus.installed;
   const aiWorking = isBusy(aiStatus.phase) || aiStatus.taskState !== "idle";
@@ -521,36 +925,154 @@ export function IOPaintPanel(): JSX.Element {
             </div>
           </div>
 
-          <div className="iopaint-shell">
-            {!status.installed ? (
-              <div className="iopaint-empty-state">
-                <strong>{t("iopaint_waiting_setup")}</strong>
-                <p className="muted">{t("iopaint_waiting_setup_desc")}</p>
-              </div>
-            ) : (
-              <>
-                {!status.ready || !frameLoaded ? (
-                  <div className="iopaint-frame-status">
-                    <strong>{status.ready ? t("iopaint_loading_frame") : t("iopaint_connecting")}</strong>
-                  </div>
-                ) : null}
-                {status.ready ? (
-                  <iframe
-                    ref={frameRef}
-                    key={frameKey}
-                    className="iopaint-frame"
-                    src={status.url}
-                    title={t("iopaint_mode_builtin")}
-                    allow="clipboard-read; clipboard-write"
-                    onLoad={() => {
-                      installFrameTweaks();
-                      setFrameLoaded(true);
-                    }}
-                  />
-                ) : null}
-              </>
-            )}
+          <div className="row-buttons iopaint-view-toggle">
+            <button type="button" className={iopaintViewMode === "native" ? "active" : ""} onClick={() => setIopaintViewMode("native")}>
+              {t("iopaint_native_mode")}
+            </button>
+            <button type="button" className={iopaintViewMode === "full" ? "active" : ""} onClick={() => setIopaintViewMode("full")}>
+              {t("iopaint_full_mode")}
+            </button>
           </div>
+
+          {iopaintViewMode === "native" ? (
+            <div className="iopaint-native-shell">
+              {!status.installed ? (
+                <div className="iopaint-empty-state">
+                  <strong>{t("iopaint_waiting_setup")}</strong>
+                  <p className="muted">{t("iopaint_waiting_setup_desc")}</p>
+                </div>
+              ) : !status.ready ? (
+                <div className="iopaint-frame-status">
+                  <strong>{t("iopaint_connecting")}</strong>
+                </div>
+              ) : (
+                <>
+                  <div className="iopaint-native-toolbar">
+                    <div className="iopaint-native-card">
+                      <div className="iopaint-native-card-header">
+                        <strong>{t("iopaint_native_editor_title")}</strong>
+                        <span className="muted">{currentModel?.name ?? "-"}</span>
+                      </div>
+                      <div className="row-buttons">
+                        <button type="button" onClick={() => void pickNativeImage()} disabled={nativeBusy}>
+                          {t("iopaint_native_pick_image")}
+                        </button>
+                        <button type="button" onClick={clearNativeMask} disabled={!nativeMaskDirty || nativeBusy}>
+                          {t("iopaint_native_clear_mask")}
+                        </button>
+                        <button type="button" onClick={resetNativeResult} disabled={!nativeOriginalDataUrl || nativeBusy}>
+                          {t("iopaint_native_reset")}
+                        </button>
+                        <button type="button" className="accent" onClick={runNativeInpaint} disabled={nativeBusy || !nativeWorkingDataUrl}>
+                          {nativeBusy ? t("iopaint_native_running") : t("iopaint_native_run")}
+                        </button>
+                        <button type="button" onClick={saveNativeResult} disabled={nativeBusy || !nativeWorkingDataUrl}>
+                          {t("iopaint_native_save")}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="iopaint-native-card">
+                      <div className="iopaint-native-field-grid">
+                        <label>
+                          <span>{t("iopaint_native_model")}</span>
+                          <select
+                            value={selectedModel}
+                            disabled={nativeBusy || !!serverConfig?.disableModelSwitch}
+                            onChange={(event) => setSelectedModel(event.target.value)}
+                          >
+                            {(serverConfig?.modelInfos ?? []).map((model) => (
+                              <option key={model.name} value={model.name}>{model.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span>{t("iopaint_native_brush")}</span>
+                          <input
+                            type="range"
+                            min="4"
+                            max="160"
+                            step="1"
+                            value={nativeBrushSize}
+                            onChange={(event) => setNativeBrushSize(Number(event.target.value))}
+                          />
+                        </label>
+                        <label>
+                          <span>{t("iopaint_native_prompt")}</span>
+                          <input
+                            type="text"
+                            value={nativePrompt}
+                            onChange={(event) => setNativePrompt(event.target.value)}
+                            placeholder={t("iopaint_native_prompt_placeholder")}
+                          />
+                        </label>
+                      </div>
+                      <label className="inline-check">
+                        <input type="checkbox" checked={nativeEraseMode} onChange={(event) => setNativeEraseMode(event.target.checked)} />
+                        <span>{t("iopaint_native_erase_mode")}</span>
+                      </label>
+                      <p className="muted">
+                        {nativeError
+                          ?? (nativeImagePath
+                            ? `${t("iopaint_native_current_file")}: ${getBaseName(nativeImagePath)}`
+                            : t("iopaint_native_hint"))}
+                      </p>
+                      {nativeSeed ? <code className="markremover-code">seed: {nativeSeed}</code> : null}
+                    </div>
+                  </div>
+
+                  <div className="iopaint-native-stage">
+                    {nativeWorkingDataUrl ? (
+                      <canvas
+                        ref={nativeCanvasRef}
+                        className="iopaint-native-canvas"
+                        onPointerDown={handleNativeCanvasPointerDown}
+                        onPointerMove={handleNativeCanvasPointerMove}
+                        onPointerUp={finishNativeStroke}
+                        onPointerLeave={finishNativeStroke}
+                      />
+                    ) : (
+                      <div className="iopaint-empty-state">
+                        <strong>{t("iopaint_native_stage_title")}</strong>
+                        <p className="muted">{t("iopaint_native_stage_desc")}</p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <div ref={frameShellRef} className="iopaint-shell">
+              {!status.installed ? (
+                <div className="iopaint-empty-state">
+                  <strong>{t("iopaint_waiting_setup")}</strong>
+                  <p className="muted">{t("iopaint_waiting_setup_desc")}</p>
+                </div>
+              ) : (
+                <>
+                  {!status.ready || !frameLoaded ? (
+                    <div className="iopaint-frame-status">
+                      <strong>{status.ready ? t("iopaint_loading_frame") : t("iopaint_connecting")}</strong>
+                    </div>
+                  ) : null}
+                  {frameUrl ? (
+                    <iframe
+                      ref={frameRef}
+                      className="iopaint-frame"
+                      src={frameUrl}
+                      title={t("iopaint_mode_builtin")}
+                      allow="clipboard-read; clipboard-write"
+                      onLoad={() => {
+                        installFrameTweaks();
+                        setFrameLoaded(true);
+                        forceFrameRelayout();
+                      }}
+                    />
+                  ) : null}
+                </>
+              )}
+            </div>
+          )}
         </>
       ) : (
         <div className="markremover-shell">

@@ -375,6 +375,7 @@ interface BgRemovePayload {
   enhanceEdges?: boolean;
   mode?: BgRemoveMode;
   backgroundTolerance?: number;
+  managedRembgPythonCandidates?: string[];
 }
 
 interface BgRemoveFailure {
@@ -544,13 +545,48 @@ function connectedComponents(mask: Uint8Array, width: number, height: number): A
   return regions;
 }
 
-async function runRembg(inputPath: string, outputPath: string, enhanceEdges: boolean): Promise<void> {
+function getManagedRembgPythonCandidates(payloadCandidates?: string[]): string[] {
+  const envAppDataRoot = process.env.APPDATA ? path.join(process.env.APPDATA, "sprite-forge-app") : "";
+  const envCandidates = envAppDataRoot
+    ? [
+        path.join(envAppDataRoot, "iopaint", "python", "python.exe"),
+        path.join(envAppDataRoot, "MarkRemover-AI", "python", "python.exe")
+      ]
+    : [];
+
+  return [...new Set([...(payloadCandidates ?? []), ...envCandidates].filter(Boolean))];
+}
+
+function buildManagedPythonRembgArgs(inputPath: string, outputPath: string, enhanceEdges: boolean): string[] {
+  const script = [
+    "from pathlib import Path",
+    "import sys",
+    "from rembg import remove",
+    "src = Path(sys.argv[1])",
+    "dst = Path(sys.argv[2])",
+    "data = src.read_bytes()",
+    enhanceEdges
+      ? "result = remove(data, alpha_matting=True, alpha_matting_erode_size=15)"
+      : "result = remove(data)",
+    "dst.write_bytes(result)"
+  ].join("; ");
+
+  return ["-c", script, inputPath, outputPath];
+}
+
+async function runRembg(
+  inputPath: string,
+  outputPath: string,
+  enhanceEdges: boolean,
+  managedPythonCandidates?: string[]
+): Promise<void> {
   const rembgArgs = enhanceEdges
     ? ["i", "-a", "-ae", "15", inputPath, outputPath]
     : ["i", inputPath, outputPath];
 
   const rembgFallbackArgs = ["i", inputPath, outputPath];
   const candidates: Array<{ command: string; args: string[] }> = [];
+  const resolvedManagedPythonCandidates = getManagedRembgPythonCandidates(managedPythonCandidates);
 
   const directCandidates = process.platform === "win32"
     ? [
@@ -567,8 +603,14 @@ async function runRembg(inputPath: string, outputPath: string, enhanceEdges: boo
     if (command && await fs.pathExists(command)) {
       candidates.push({ command, args: rembgArgs });
       if (enhanceEdges) {
-        candidates.push({ command, args: rembgFallbackArgs });
+      candidates.push({ command, args: rembgFallbackArgs });
       }
+    }
+  }
+
+  for (const pythonExe of resolvedManagedPythonCandidates) {
+    if (pythonExe && await fs.pathExists(pythonExe)) {
+      candidates.push({ command: pythonExe, args: buildManagedPythonRembgArgs(inputPath, outputPath, enhanceEdges) });
     }
   }
 
@@ -957,6 +999,7 @@ async function handleBgPreview(payload: {
   enhanceEdges?: boolean;
   mode?: BgRemoveMode;
   backgroundTolerance?: number;
+  managedRembgPythonCandidates?: string[];
 }) {
   if (!payload.inputPath) {
     throw new Error("미리보기 대상 이미지가 없습니다.");
@@ -981,7 +1024,12 @@ async function handleBgPreview(payload: {
     if (appliedMode === "solid") {
       await removeSolidBackground(tempInputPath, tempOutputPath, tolerance);
     } else {
-      await runRembg(tempInputPath, tempOutputPath, Boolean(payload.enhanceEdges));
+      await runRembg(
+        tempInputPath,
+        tempOutputPath,
+        Boolean(payload.enhanceEdges),
+        payload.managedRembgPythonCandidates
+      );
     }
 
     const outputBuffer = await buildProcessedImage(tempOutputPath, {
@@ -1053,7 +1101,12 @@ async function handleBgRemoveBatch(requestId: string, payload: BgRemovePayload) 
         if (appliedMode === "solid") {
           await removeSolidBackground(tempInputPath, tempOutputPath, tolerance);
         } else {
-          await runRembg(tempInputPath, tempOutputPath, Boolean(payload.enhanceEdges));
+          await runRembg(
+            tempInputPath,
+            tempOutputPath,
+            Boolean(payload.enhanceEdges),
+            payload.managedRembgPythonCandidates
+          );
         }
 
         const outputName = pickOutputName(inputPath, usedNames);

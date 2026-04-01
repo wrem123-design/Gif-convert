@@ -20,11 +20,12 @@ const TOOL_ID = "sprite-forge-cut-move-tool";
 const TOOL_STYLE_ID = "sprite-forge-cut-move-style";
 const TOOL_ACTIVE_CLASS = "sprite-forge-cut-move-tool-active";
 const TOOL_ICON_URL = new URL("./icons/tool-Arrange.svg", ${JSON.stringify(mainScriptUrl)}).toString();
-const TOOL_TOOLTIP = "활성화된 선택 요소, 선택한 영역을 드래그하여 이동 또는 자르세요";
+const TOOL_TOOLTIP = "선택 영역 이동";
 const ORIGINAL_COMMIT_KEY = "__spriteForgeOriginalStoreCommit";
 const FLOATING_STATE_KEY = "__spriteForgeFloatingSelectionState";
 const PREVIOUS_TOOL_KEY = "__spriteForgeCutMovePreviousTool";
 const ALT_STATE_KEY = "__spriteForgeAltPressed";
+const POINTER_STATE_KEY = "__spriteForgePointerState";
 
 const isToolActive = () => window.__spriteForgeCutMoveToolActive === true;
 const setToolActive = (next) => {
@@ -61,14 +62,29 @@ const isAltTrackedDown = () => window[ALT_STATE_KEY] === true;
 const setAltTrackedDown = (next) => {
   window[ALT_STATE_KEY] = next;
 };
+const getPointerState = () => window[POINTER_STATE_KEY] || null;
+const setPointerState = (state) => {
+  window[POINTER_STATE_KEY] = state;
+};
 const ensureNotificationPatch = (store) => {
   if (!store || store[ORIGINAL_COMMIT_KEY]) {
     return;
   }
   store[ORIGINAL_COMMIT_KEY] = store.commit.bind(store);
   store.commit = (type, payload, options) => {
-    if (window.__spriteForgeSuppressCutMoveNotification && type === "showNotification") {
-      return;
+    if (type === "showNotification") {
+      const payloadText = typeof payload === "string"
+        ? payload
+        : payload && typeof payload === "object" && "message" in payload
+          ? String(payload.message ?? "")
+          : "";
+      if (
+        window.__spriteForgeSuppressCutMoveNotification
+        || payloadText.includes("활성화된 선택 요소")
+        || payloadText.includes("선택한 영역을 드래그하여 이동 또는 자르세요")
+      ) {
+        return;
+      }
     }
     return store[ORIGINAL_COMMIT_KEY](type, payload, options);
   };
@@ -518,9 +534,6 @@ const ensureToolButton = () => {
 };
 
 const dispatchAltRelease = () => {
-  if (!isAltTrackedDown()) {
-    return;
-  }
   setAltTrackedDown(false);
   const altUp = new KeyboardEvent("keyup", {
     key: "Alt",
@@ -530,8 +543,60 @@ const dispatchAltRelease = () => {
     bubbles: true,
     cancelable: true
   });
-  window.dispatchEvent(altUp);
-  document.dispatchEvent(altUp);
+  const targets = [];
+  const pointerState = getPointerState();
+  const hostRoot = getHostRoot();
+  const canvas = hostRoot ? getCanvasForDocument(getStore() && getStore().getters ? getStore().getters.activeDocument : null) : null;
+
+  targets.push(window, document);
+  if (hostRoot) {
+    targets.push(hostRoot);
+  }
+  if (canvas) {
+    targets.push(canvas);
+  }
+  if (document.activeElement && typeof document.activeElement.dispatchEvent === "function") {
+    targets.push(document.activeElement);
+  }
+  if (pointerState && Number.isFinite(pointerState.clientX) && Number.isFinite(pointerState.clientY)) {
+    const hovered = document.elementFromPoint(pointerState.clientX, pointerState.clientY);
+    if (hovered) {
+      targets.push(hovered);
+    }
+  }
+
+  const uniqueTargets = Array.from(new Set(targets.filter(Boolean)));
+  uniqueTargets.forEach((target) => {
+    if (target && typeof target.dispatchEvent === "function") {
+      target.dispatchEvent(altUp);
+    }
+  });
+
+  if (pointerState && Number.isFinite(pointerState.clientX) && Number.isFinite(pointerState.clientY)) {
+    const moveInit = {
+      bubbles: true,
+      cancelable: true,
+      clientX: pointerState.clientX,
+      clientY: pointerState.clientY,
+      screenX: pointerState.screenX ?? pointerState.clientX,
+      screenY: pointerState.screenY ?? pointerState.clientY,
+      altKey: false,
+      buttons: pointerState.buttons ?? 0,
+      button: -1
+    };
+    const hovered = document.elementFromPoint(pointerState.clientX, pointerState.clientY);
+    const moveTargets = Array.from(new Set([hovered, document.activeElement, canvas, hostRoot].filter(Boolean)));
+    moveTargets.forEach((target) => {
+      if (!target || typeof target.dispatchEvent !== "function") {
+        return;
+      }
+      try {
+        target.dispatchEvent(new PointerEvent("pointermove", moveInit));
+      } catch (_error) {
+        target.dispatchEvent(new MouseEvent("mousemove", moveInit));
+      }
+    });
+  }
 };
 
 const ensurePatched = async () => {
@@ -568,7 +633,19 @@ const ensurePatched = async () => {
   const onTrackAltKeyUp = (event) => {
     if (event.key === "Alt") {
       setAltTrackedDown(false);
+      dispatchAltRelease();
     }
+  };
+
+  const onTrackPointerState = (event) => {
+    setPointerState({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      screenX: event.screenX,
+      screenY: event.screenY,
+      buttons: event.buttons,
+      targetTag: event.target && event.target.tagName ? event.target.tagName : null
+    });
   };
 
   const onWindowBlur = () => {
@@ -582,6 +659,12 @@ const ensurePatched = async () => {
   };
 
   const onPointerDownAltReset = (event) => {
+    if (!event.altKey) {
+      dispatchAltRelease();
+    }
+  };
+
+  const onPointerUpAltReset = (event) => {
     if (!event.altKey) {
       dispatchAltRelease();
     }
@@ -786,9 +869,12 @@ const ensurePatched = async () => {
 
   window.addEventListener("keydown", onTrackAltKeyDown, true);
   window.addEventListener("keyup", onTrackAltKeyUp, true);
+  window.addEventListener("pointermove", onTrackPointerState, true);
+  window.addEventListener("mousemove", onTrackPointerState, true);
   window.addEventListener("blur", onWindowBlur, true);
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("pointerdown", onPointerDownAltReset, true);
+  window.addEventListener("pointerup", onPointerUpAltReset, true);
   window.addEventListener("pointerdown", onPointerDownCutMove, true);
   window.addEventListener("pointermove", onPointerMoveCutMove, true);
   window.addEventListener("pointerup", onPointerUpCutMove, true);
@@ -807,9 +893,12 @@ const ensurePatched = async () => {
     window.__spriteForgeSuppressCutMoveNotification = false;
     window.removeEventListener("keydown", onTrackAltKeyDown, true);
     window.removeEventListener("keyup", onTrackAltKeyUp, true);
+    window.removeEventListener("pointermove", onTrackPointerState, true);
+    window.removeEventListener("mousemove", onTrackPointerState, true);
     window.removeEventListener("blur", onWindowBlur, true);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pointerdown", onPointerDownAltReset, true);
+    window.removeEventListener("pointerup", onPointerUpAltReset, true);
     window.removeEventListener("pointerdown", onPointerDownCutMove, true);
     window.removeEventListener("pointermove", onPointerMoveCutMove, true);
     window.removeEventListener("pointerup", onPointerUpCutMove, true);

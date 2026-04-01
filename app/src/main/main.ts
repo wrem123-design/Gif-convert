@@ -8,8 +8,12 @@ import {
   ensureIOPaintInstalled,
   ensureIOPaintReady,
   getIOPaintStatus,
+  getIOPaintServerConfig,
+  getCurrentIOPaintModel,
   restartIOPaint,
-  shutdownIOPaint
+  runIOPaintInpaint,
+  shutdownIOPaint,
+  switchIOPaintModel
 } from "./iopaintManager";
 import {
   ensureMarkRemoverInstalled,
@@ -41,6 +45,7 @@ interface WorkerResponse {
 }
 
 let worker: Worker | null = null;
+let isQuitting = false;
 const pending = new Map<
   string,
   {
@@ -104,6 +109,17 @@ function callWorker<T = unknown>(
   });
 }
 
+function enrichBgRemovePayload<T extends Record<string, unknown>>(payload: T): T & { managedRembgPythonCandidates: string[] } {
+  const userDataPath = app.getPath("userData");
+  return {
+    ...payload,
+    managedRembgPythonCandidates: [
+      path.join(userDataPath, "iopaint", "python", "python.exe"),
+      path.join(userDataPath, "MarkRemover-AI", "python", "python.exe")
+    ]
+  };
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1600,
@@ -133,7 +149,25 @@ function createWindow(): BrowserWindow {
     win.webContents.setIgnoreMenuShortcuts(!input.control && !input.meta);
   });
 
+  win.on("close", () => {
+    if (process.platform !== "darwin") {
+      isQuitting = true;
+    }
+  });
+
   return win;
+}
+
+async function shutdownAppServices(): Promise<void> {
+  const tasks: Promise<unknown>[] = [shutdownIOPaint(), shutdownMarkRemover()];
+
+  if (worker) {
+    const currentWorker = worker;
+    worker = null;
+    tasks.push(currentWorker.terminate().catch(() => undefined));
+  }
+
+  await Promise.allSettled(tasks);
 }
 
 async function ensureDefaultProjectDir(): Promise<string> {
@@ -372,8 +406,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("project:export", async (_event, payload) => callWorker("project:export", payload));
   ipcMain.handle("project:pixelEdit", async (_event, payload) => callWorker("project:pixelEdit", payload));
   ipcMain.handle("tool:bgCollectFiles", async (_event, payload) => callWorker("tool:bgCollectFiles", payload));
-  ipcMain.handle("tool:bgPreview", async (_event, payload) => callWorker("tool:bgPreview", payload));
-  ipcMain.handle("tool:bgRemoveBatch", async (event, payload) => callWorker("tool:bgRemoveBatch", payload, { sender: event.sender }));
+  ipcMain.handle("tool:bgPreview", async (_event, payload) =>
+    callWorker("tool:bgPreview", enrichBgRemovePayload(payload as Record<string, unknown>))
+  );
+  ipcMain.handle("tool:bgRemoveBatch", async (event, payload) =>
+    callWorker("tool:bgRemoveBatch", enrichBgRemovePayload(payload as Record<string, unknown>), { sender: event.sender })
+  );
   ipcMain.handle("tool:spriteSheetAutoGif", async (_event, payload) => callWorker("tool:spriteSheetAutoGif", payload));
   ipcMain.handle("tool:extractSpriteMap", async (_event, payload) => callWorker("tool:extractSpriteMap", payload));
   ipcMain.handle("tool:exportLeshyAnimation", async (_event, payload) => callWorker("tool:exportLeshyAnimation", payload));
@@ -411,6 +449,10 @@ app.whenReady().then(async () => {
   ipcMain.handle("iopaint:ensureInstalled", async () => await ensureIOPaintInstalled());
   ipcMain.handle("iopaint:ensureStarted", async () => await ensureIOPaintReady());
   ipcMain.handle("iopaint:restart", async () => await restartIOPaint());
+  ipcMain.handle("iopaint:getServerConfig", async () => await getIOPaintServerConfig());
+  ipcMain.handle("iopaint:getCurrentModel", async () => await getCurrentIOPaintModel());
+  ipcMain.handle("iopaint:switchModel", async (_event, name: string) => await switchIOPaintModel(name));
+  ipcMain.handle("iopaint:inpaint", async (_event, payload) => await runIOPaintInpaint(payload));
   ipcMain.handle("markremover:getStatus", async () => getMarkRemoverStatus());
   ipcMain.handle("markremover:ensureInstalled", async () => await ensureMarkRemoverInstalled());
   ipcMain.handle("markremover:preview", async (_event, payload) => await previewMarkRemover(payload));
@@ -427,11 +469,22 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    app.quit();
+    void (async () => {
+      isQuitting = true;
+      await shutdownAppServices();
+      app.exit(0);
+    })();
   }
 });
 
-app.on("before-quit", () => {
-  void shutdownIOPaint();
-  void shutdownMarkRemover();
+app.on("before-quit", (event) => {
+  if (isQuitting) {
+    return;
+  }
+  event.preventDefault();
+  isQuitting = true;
+  void (async () => {
+    await shutdownAppServices();
+    app.exit(0);
+  })();
 });

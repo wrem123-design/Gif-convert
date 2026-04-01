@@ -35,6 +35,23 @@ export interface IOPaintStatus {
   error: string | null;
 }
 
+export interface IOPaintServerConfig {
+  modelInfos: Array<{
+    name: string;
+    model_type: string;
+    need_prompt: boolean;
+  }>;
+  disableModelSwitch: boolean;
+  samplers: string[];
+}
+
+export interface IOPaintModelInfo {
+  name: string;
+  path: string;
+  model_type: string;
+  need_prompt: boolean;
+}
+
 interface IOPaintRuntimePaths {
   runtimeRoot: string;
   repoDir: string;
@@ -533,6 +550,20 @@ async function startManagedService(): Promise<void> {
   });
 }
 
+async function requestIOPaintApi<T>(endpoint: string, init?: RequestInit): Promise<T> {
+  await ensureIOPaintReady();
+  const response = await fetch(`${currentUrl}/api/v1${endpoint}`, init);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || `IOPaint API request failed: ${endpoint}`);
+  }
+  return await response.json() as T;
+}
+
+function bufferToDataUrl(buffer: Buffer, mimeType: string): string {
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
 export function getIOPaintStatus(): IOPaintStatus {
   return withRuntimePaths(currentStatus);
 }
@@ -645,6 +676,108 @@ export async function restartIOPaint(): Promise<IOPaintStatus> {
   });
 
   return await ensureIOPaintReady();
+}
+
+export async function getIOPaintServerConfig(): Promise<IOPaintServerConfig> {
+  return await requestIOPaintApi<IOPaintServerConfig>("/server-config", {
+    method: "GET"
+  });
+}
+
+export async function getCurrentIOPaintModel(): Promise<IOPaintModelInfo> {
+  return await requestIOPaintApi<IOPaintModelInfo>("/model", {
+    method: "GET"
+  });
+}
+
+export async function switchIOPaintModel(name: string): Promise<IOPaintModelInfo> {
+  return await requestIOPaintApi<IOPaintModelInfo>("/model", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ name })
+  });
+}
+
+export async function runIOPaintInpaint(payload: {
+  imageDataUrl: string;
+  maskDataUrl: string;
+  model?: string | null;
+  prompt?: string;
+  negativePrompt?: string;
+  sdSteps?: number;
+  sdGuidanceScale?: number;
+  sdMaskBlur?: number;
+}): Promise<{ imageDataUrl: string; seed: string | null }> {
+  if (payload.model) {
+    const currentModel = await getCurrentIOPaintModel();
+    if (currentModel.name !== payload.model) {
+      await switchIOPaintModel(payload.model);
+    }
+  }
+
+  await ensureIOPaintReady();
+  const response = await fetch(`${currentUrl}/api/v1/inpaint`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      image: payload.imageDataUrl,
+      mask: payload.maskDataUrl,
+      ldm_steps: 20,
+      ldm_sampler: "plms",
+      zits_wireframe: false,
+      cv2_flag: "INPAINT_NS",
+      cv2_radius: 4,
+      hd_strategy: "Crop",
+      hd_strategy_crop_triger_size: 640,
+      hd_strategy_crop_margin: 128,
+      hd_trategy_resize_imit: 2048,
+      prompt: payload.prompt ?? "",
+      negative_prompt: payload.negativePrompt ?? "",
+      use_croper: false,
+      croper_x: 0,
+      croper_y: 0,
+      croper_height: 0,
+      croper_width: 0,
+      use_extender: false,
+      extender_x: 0,
+      extender_y: 0,
+      extender_height: 0,
+      extender_width: 0,
+      sd_mask_blur: payload.sdMaskBlur ?? 8,
+      sd_strength: 1,
+      sd_steps: payload.sdSteps ?? 30,
+      sd_guidance_scale: payload.sdGuidanceScale ?? 7.5,
+      sd_sampler: "uni_pc",
+      sd_seed: -1,
+      sd_match_histograms: false,
+      sd_lcm_lora: false,
+      paint_by_example_example_image: null,
+      p2p_image_guidance_scale: 1.5,
+      enable_controlnet: false,
+      controlnet_conditioning_scale: 0.4,
+      controlnet_method: "",
+      enable_brushnet: false,
+      brushnet_method: "",
+      brushnet_conditioning_scale: 1,
+      enable_powerpaint_v2: false,
+      powerpaint_task: "object-remove"
+    })
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || "IOPaint inpaint request failed.");
+  }
+
+  const outputBuffer = Buffer.from(await response.arrayBuffer());
+  return {
+    imageDataUrl: bufferToDataUrl(outputBuffer, response.headers.get("content-type") ?? "image/png"),
+    seed: response.headers.get("X-Seed")
+  };
 }
 
 export async function shutdownIOPaint(): Promise<void> {

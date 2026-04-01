@@ -605,6 +605,13 @@ button.large {
   background: var(--accent);
 }
 
+.persistent-tool-panel {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 body.workspace-resizing {
   cursor: row-resize;
   user-select: none;
@@ -1516,6 +1523,10 @@ body.workspace-resizing {
   flex-wrap: wrap;
 }
 
+.iopaint-view-toggle {
+  flex-wrap: wrap;
+}
+
 .iopaint-setup-card {
   display: flex;
   flex-direction: column;
@@ -1716,6 +1727,68 @@ body.workspace-resizing {
   background:
     linear-gradient(180deg, rgba(10, 16, 28, 0.92), rgba(10, 16, 28, 0.82)),
     #0b1220;
+}
+
+.iopaint-native-shell {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+}
+
+.iopaint-native-toolbar {
+  display: grid;
+  grid-template-columns: minmax(340px, 1.1fr) minmax(280px, 0.9fr);
+  gap: 12px;
+}
+
+.iopaint-native-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: rgba(10, 16, 28, 0.72);
+  box-shadow: var(--shadow-sm);
+}
+
+.iopaint-native-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.iopaint-native-field-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.iopaint-native-stage {
+  min-height: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: auto;
+  padding: 16px;
+  background:
+    linear-gradient(45deg, var(--checker-a) 25%, var(--checker-b) 25%) 0 0 / 20px 20px,
+    linear-gradient(-45deg, var(--checker-a) 25%, var(--checker-b) 25%) 0 0 / 20px 20px,
+    var(--bg-input);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.iopaint-native-canvas {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  cursor: crosshair;
 }
 
 .iopaint-empty-state {
@@ -3519,6 +3592,8 @@ body.pixel-helper-resizing {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .iopaint-native-toolbar,
+  .iopaint-native-field-grid,
   .markremover-layout,
   .markremover-field-grid,
   .markremover-stat-grid {

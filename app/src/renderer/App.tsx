@@ -263,6 +263,10 @@ export function App(): JSX.Element {
     { id: "photo_editor", label: t("tab_photo_editor"), icon: <IconImage />, tone: "tool" },
     { id: "iopaint", label: t("tab_iopaint"), icon: <IconSparkles />, tone: "tool" }
   ];
+  const persistentToolPanelStyle = (panelTab: AppTab) => ({
+    display: tab === panelTab ? "block" : "none",
+    height: "100%"
+  });
 
   return (
     <div
@@ -363,16 +367,12 @@ export function App(): JSX.Element {
 
       {/* ── Workspace ── */}
       <div ref={workspaceRef} className={workspaceClassName} style={workspaceStyle}>
-        {tab === "bg_remove" ? (
+        {tab === "photo_editor" || tab === "iopaint" ? null : tab === "bg_remove" ? (
           <BackgroundRemovalPanel />
         ) : tab === "pixel_helper" ? (
           <PixelHelperPanel />
         ) : tab === "leshy_sprite" ? (
           <LeshySpritePanel />
-        ) : tab === "photo_editor" ? (
-          <PhotoEditorPanel />
-        ) : tab === "iopaint" ? (
-          <IOPaintPanel />
         ) : tab === "sprite" ? (
           <>
             <PixelEditorPanel mode="sprite" />
@@ -412,6 +412,12 @@ export function App(): JSX.Element {
             <TimelinePanel />
           </>
         )}
+        <div className="persistent-tool-panel" style={persistentToolPanelStyle("photo_editor")} aria-hidden={tab !== "photo_editor"}>
+          <PhotoEditorPanel />
+        </div>
+        <div className="persistent-tool-panel" style={persistentToolPanelStyle("iopaint")} aria-hidden={tab !== "iopaint"}>
+          <IOPaintPanel />
+        </div>
       </div>
 
       {/* ── Status Bar ── */}
@@ -477,7 +483,7 @@ export function App(): JSX.Element {
               {/* App Info */}
               <div className="settings-section">
                 <span className="settings-section-title">정보</span>
-                <p className="settings-info">Sprite Studio v1.0</p>
+                <p className="settings-info">Sprite Studio v1.0.1</p>
               </div>
             </div>
 

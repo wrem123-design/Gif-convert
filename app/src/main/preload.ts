@@ -24,6 +24,21 @@ const api = {
   ensureIOPaintInstalled: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:ensureInstalled"),
   ensureIOPaintStarted: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:ensureStarted"),
   restartIOPaint: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:restart"),
+  getIOPaintServerConfig: (): Promise<unknown> => ipcRenderer.invoke("iopaint:getServerConfig"),
+  getCurrentIOPaintModel: (): Promise<unknown> => ipcRenderer.invoke("iopaint:getCurrentModel"),
+  switchIOPaintModel: (name: string): Promise<unknown> => ipcRenderer.invoke("iopaint:switchModel", name),
+  runIOPaintInpaint: (
+    payload: {
+      imageDataUrl: string;
+      maskDataUrl: string;
+      model?: string | null;
+      prompt?: string;
+      negativePrompt?: string;
+      sdSteps?: number;
+      sdGuidanceScale?: number;
+      sdMaskBlur?: number;
+    }
+  ): Promise<{ imageDataUrl: string; seed: string | null }> => ipcRenderer.invoke("iopaint:inpaint", payload),
   getMarkRemoverStatus: (): Promise<MarkRemoverStatus> => ipcRenderer.invoke("markremover:getStatus"),
   ensureMarkRemoverInstalled: (): Promise<MarkRemoverStatus> => ipcRenderer.invoke("markremover:ensureInstalled"),
   previewMarkRemover: (payload: MarkRemoverPreviewOptions): Promise<MarkRemoverPreviewResult> =>
