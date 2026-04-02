@@ -8,6 +8,9 @@ files:
   - dist/main/**/*
   - dist/renderer/**/*
   - package.json
+extraResources:
+  - from: build/icon.ico
+    to: build/icon.ico
 asar: true
 asarUnpack:
   - dist/main/processorWorkerBootstrap.js

@@ -73,12 +73,18 @@ First use requirements:
 
 The app installs and manages the remaining runtime components on its own.
 
+Important:
+- AI features are intended for personal or managed setups, not locked-down enterprise PCs.
+- On first use, they may need internet access plus local `Git for Windows` and `Node.js 20+`.
+- If your environment blocks GitHub, npm, or Python downloads, the core editor still works but AI setup can fail.
+
 ## Release Page
 GitHub Releases:
 - https://github.com/wrem123-design/Gif-convert/releases
 
 ## Release Notes
 
+- [`docs/releases/v1.0.5.md`](./docs/releases/v1.0.5.md)
 - [`docs/releases/v1.0.4.md`](./docs/releases/v1.0.4.md)
 
 ## Local-Only Behavior
@@ -89,4 +95,5 @@ GitHub Releases:
 ## Related Docs
 - [`docs/IOPAINT_SETUP.md`](./docs/IOPAINT_SETUP.md)
 - [`docs/INSTALL.md`](./docs/INSTALL.md)
+- [`docs/releases/v1.0.5.md`](./docs/releases/v1.0.5.md)
 - [`docs/releases/v1.0.4.md`](./docs/releases/v1.0.4.md)

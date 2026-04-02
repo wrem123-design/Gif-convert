@@ -258,7 +258,7 @@ async function ensurePrerequisites(): Promise<void> {
     missing.push("Windows PowerShell 사용 가능 상태 확인");
   }
 
-  if (!(await canRunCommand("cmd", ["/c", "npm", "--version"])) && false) {
+  if (!(await canRunCommand("cmd", ["/c", "npm", "--version"]))) {
     missing.push("Node.js 20+ 설치 후 `npm --version` 확인");
   }
 

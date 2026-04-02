@@ -30,8 +30,12 @@ Use this when you want Start Menu registration and a standard uninstall flow.
 ## 3. First run notes
 
 - The app stores local settings under your Windows user profile.
+- Project data defaults to the app user-data folder instead of `Documents`.
+- Runtime logs are stored under the app user-data `logs` folder and are cleaned up automatically.
 - AI tools may take longer on first use because local runtimes or models can be prepared.
-- If you enabled `시작 시 최소화`, the app may launch minimized instead of opening in front.
+- AI tools also expect internet access plus local `Git for Windows` and `Node.js 20+` on first setup.
+- In restricted corporate environments, AI setup may fail even if the main editor launches normally.
+- If you enabled `Start minimized`, the app may launch minimized instead of opening in front.
 
 ## 4. Development install
 
@@ -57,3 +61,5 @@ npm run package:portable
 
 Output folder:
 - [`app/release`](../app/release)
+- Installer build: `Sprite Studio Setup 1.0.5.exe`
+- Portable build: `Sprite Studio 1.0.5.exe`

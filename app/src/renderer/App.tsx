@@ -113,7 +113,7 @@ export function App(): JSX.Element {
   const projectDir = useEditorStore((s) => s.projectDir);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setThemeState] = useState<ThemeMode>(loadTheme);
-  const [launchMinimized, setLaunchMinimized] = useState(false);
+  const [launchMinimized, setLaunchMinimized] = useState(true);
   const [launchSettingsBusy, setLaunchSettingsBusy] = useState(false);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(200);
   const [compactLayout, setCompactLayout] = useState(() => window.innerWidth <= 980);
@@ -529,7 +529,7 @@ export function App(): JSX.Element {
               {/* App Info */}
               <div className="settings-section">
                 <span className="settings-section-title">정보</span>
-                <p className="settings-info">Sprite Studio v1.0.4</p>
+                <p className="settings-info">Sprite Studio v1.0.5</p>
               </div>
 
               <div className="settings-section">

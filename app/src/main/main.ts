@@ -2,7 +2,6 @@ import { app, BrowserWindow, Menu, WebContents, dialog, ipcMain } from "electron
 import path from "node:path";
 import fs from "fs-extra";
 import { Worker } from "node:worker_threads";
-import os from "node:os";
 import sharp from "sharp";
 import {
   diagnoseIOPaint,
@@ -25,6 +24,7 @@ import {
   stopMarkRemoverTask,
   shutdownMarkRemover
 } from "./markRemoverManager";
+import { flushAppLogs, getAppLogDir, initAppLogging, logMain } from "./logger";
 
 interface WorkerRequest {
   id: string;
@@ -70,7 +70,7 @@ interface AppSettings {
 }
 
 const defaultAppSettings: AppSettings = {
-  launchMinimized: false
+  launchMinimized: true
 };
 
 function delay(ms: number): Promise<void> {
@@ -169,6 +169,7 @@ function ensureWorker(): Worker {
   });
 
   worker.on("error", (err) => {
+    logMain("ERROR", "worker", "Worker thread error", err);
     for (const request of pending.values()) {
       request.reject(err);
     }
@@ -176,7 +177,8 @@ function ensureWorker(): Worker {
     worker = null;
   });
 
-  worker.on("exit", () => {
+  worker.on("exit", (code) => {
+    logMain("INFO", "worker", "Worker thread exited", { code });
     worker = null;
   });
 
@@ -210,6 +212,7 @@ function enrichBgRemovePayload<T extends Record<string, unknown>>(payload: T): T
 
 function createWindow(options?: { startMinimized?: boolean }): BrowserWindow {
   const startMinimized = options?.startMinimized ?? false;
+  logMain("INFO", "window", "Creating main window", { startMinimized });
   const win = new BrowserWindow({
     width: 1600,
     height: 980,
@@ -243,17 +246,25 @@ function createWindow(options?: { startMinimized?: boolean }): BrowserWindow {
   }
 
   win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
-    console.error("Renderer load failed:", { errorCode, errorDescription, validatedURL });
+    logMain("ERROR", "renderer", "Renderer load failed", { errorCode, errorDescription, validatedURL });
   });
 
   win.webContents.on("render-process-gone", (_event, details) => {
-    console.error("Renderer process gone:", details);
+    logMain("ERROR", "renderer", "Renderer process gone", details);
   });
 
   win.webContents.on("console-message", (_event, level, message, line, sourceId) => {
     if (level >= 2) {
-      console.error("Renderer console:", { level, message, line, sourceId });
+      logMain("ERROR", "renderer-console", { level, message, line, sourceId });
     }
+  });
+
+  win.on("unresponsive", () => {
+    logMain("WARN", "window", "Main window became unresponsive");
+  });
+
+  win.on("closed", () => {
+    logMain("INFO", "window", "Main window closed");
   });
 
   win.setMenuBarVisibility(false);
@@ -308,6 +319,7 @@ async function requestAppExit(exitCode = 0): Promise<void> {
     return;
   }
 
+  logMain("INFO", "app", "Requesting app exit", { exitCode });
   isQuitting = true;
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
@@ -319,7 +331,7 @@ async function requestAppExit(exitCode = 0): Promise<void> {
 }
 
 async function ensureDefaultProjectDir(): Promise<string> {
-  const base = path.join(os.homedir(), "Documents", "SpriteForgeProject");
+  const base = path.join(app.getPath("userData"), "projects", "SpriteForgeProject");
   await fs.ensureDir(base);
   return base;
 }
@@ -541,6 +553,7 @@ function createAppMenu(win: BrowserWindow): void {
 }
 
 app.on("second-instance", () => {
+  logMain("INFO", "app", "Second instance requested");
   const win = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
   if (win && !win.isDestroyed()) {
     if (win.isMinimized()) {
@@ -555,8 +568,11 @@ app.on("second-instance", () => {
 });
 
 app.whenReady().then(async () => {
+  const logDir = await initAppLogging();
+  logMain("INFO", "app", "Logging initialized", { logDir });
   const lockAcquired = await ensureSingleInstanceLock();
   if (!lockAcquired) {
+    logMain("WARN", "app", "Failed to acquire single instance lock");
     app.exit(0);
     return;
   }
@@ -675,6 +691,7 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle("app:getDefaultProjectDir", async () => ensureDefaultProjectDir());
+  ipcMain.handle("app:getLogDir", async () => getAppLogDir());
   ipcMain.handle("app:getSettings", async () => await loadAppSettings());
   ipcMain.handle("app:updateSettings", async (_event, payload: Partial<AppSettings>) => {
     const current = await loadAppSettings();
@@ -700,6 +717,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("markremover:stop", async () => await stopMarkRemoverTask());
 
   app.on("activate", () => {
+    logMain("INFO", "app", "Application activate event");
     if (BrowserWindow.getAllWindows().length === 0) {
       const nextWin = createWindow();
       createAppMenu(nextWin);
@@ -708,15 +726,22 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  logMain("INFO", "app", "All windows closed");
   if (process.platform !== "darwin" && !isQuitting) {
     void requestAppExit(0);
   }
 });
 
 app.on("before-quit", (event) => {
+  logMain("INFO", "app", "before-quit received", { isQuitting });
   if (isQuitting) {
     return;
   }
   event.preventDefault();
   void requestAppExit(0);
+});
+
+app.on("will-quit", () => {
+  logMain("INFO", "app", "will-quit received");
+  void flushAppLogs();
 });

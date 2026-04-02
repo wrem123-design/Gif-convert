@@ -1568,6 +1568,35 @@ body.workspace-resizing {
   gap: 12px;
 }
 
+.photo-editor-color-proxy {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  padding: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.08) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.08) 75%),
+    linear-gradient(45deg, rgba(255, 255, 255, 0.08) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.08) 75%),
+    var(--bg-elevated);
+  background-size: 10px 10px, 10px 10px, auto;
+  background-position: 0 0, 5px 5px, 0 0;
+}
+
+.photo-editor-color-proxy:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.photo-editor-color-proxy-swatch {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.22);
+}
+
 .photo-editor-shell {
   flex: 1;
   min-height: 0;

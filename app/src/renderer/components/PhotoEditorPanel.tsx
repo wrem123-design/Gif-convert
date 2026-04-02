@@ -4,6 +4,66 @@ import { useI18n } from "../i18n";
 const PHOTO_EDITOR_BUNDLE_VERSION = "2026-03-31-ko-pan";
 const PHOTO_EDITOR_HOST_ID = "sprite-forge-photo-editor-host";
 
+function findPhotoEditorColorButton(host: HTMLElement | null): HTMLElement | null {
+  if (!host || typeof window === "undefined") {
+    return null;
+  }
+
+  const candidates = Array.from(host.querySelectorAll<HTMLElement>(".pcr-button"));
+  const visible = candidates.filter((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width >= 18 && rect.height >= 18 && rect.bottom > 0 && rect.right > 0;
+  });
+  if (!visible.length) {
+    return null;
+  }
+
+  return visible
+    .slice()
+    .sort((left, right) => {
+      const leftRect = left.getBoundingClientRect();
+      const rightRect = right.getBoundingClientRect();
+      const leftPriority = leftRect.left <= 220 ? 0 : 1;
+      const rightPriority = rightRect.left <= 220 ? 0 : 1;
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+      if (leftRect.top !== rightRect.top) {
+        return rightRect.top - leftRect.top;
+      }
+      return leftRect.left - rightRect.left;
+    })[0] ?? null;
+}
+
+function readPhotoEditorColor(host: HTMLElement | null): string {
+  if (typeof window === "undefined") {
+    return "rgba(255, 0, 0, 1)";
+  }
+
+  const button = findPhotoEditorColorButton(host);
+  if (!button) {
+    return "rgba(255, 0, 0, 1)";
+  }
+
+  const readElementColor = (element: HTMLElement | null): string | null => {
+    if (!element) {
+      return null;
+    }
+    const style = window.getComputedStyle(element);
+    const cssVar = style.getPropertyValue("--pcr-color").trim();
+    if (cssVar) {
+      return cssVar;
+    }
+    const background = style.backgroundColor?.trim();
+    if (background && background !== "rgba(0, 0, 0, 0)" && background !== "transparent") {
+      return background;
+    }
+    return null;
+  };
+
+  return readElementColor(button) ?? readElementColor(button.firstElementChild as HTMLElement | null) ?? "rgba(255, 0, 0, 1)";
+}
+
 function buildSelectionNudgePatch(mainScriptUrl: string, hostSelector: string, sessionToken: string): string {
   return `
 const HOST_SELECTOR = ${JSON.stringify(hostSelector)};
@@ -37,9 +97,9 @@ const FILE_BRIDGE_CLEANUP_KEY = "__spriteForgePhotoEditorFileBridgeCleanup";
 const FILE_BRIDGE_BUSY_KEY = "__spriteForgePhotoEditorFileBridgeBusy";
 const CROP_STATE_KEY = "__spriteForgeCropState";
 const MODULE_KEY = "__spriteForgePhotoEditorModule";
+const DIRECT_LAYER_ADD_KEY = "__spriteForgeDirectGraphicLayerAddRequestedAt";
 const SESSION_KEY = "__spriteForgePhotoEditorSessionToken";
 const PATCHED_TOKEN_KEY = "__spriteForgePhotoEditorPatchedToken";
-const TOOLBAR_LAYOUT_KEY = "__spriteForgePhotoEditorToolbarLayout";
 const ALT_RELEASE_COOLDOWN_MS = 90;
 
 const isToolActive = () => window.__spriteForgeCutMoveToolActive === true;
@@ -118,6 +178,16 @@ const setCropState = (state) => {
 const clearCropState = () => {
   window[CROP_STATE_KEY] = null;
 };
+const markDirectGraphicLayerAdd = () => {
+  window[DIRECT_LAYER_ADD_KEY] = Date.now();
+};
+const clearDirectGraphicLayerAdd = () => {
+  window[DIRECT_LAYER_ADD_KEY] = 0;
+};
+const hasPendingDirectGraphicLayerAdd = () => {
+  const requestedAt = Number(window[DIRECT_LAYER_ADD_KEY] || 0);
+  return requestedAt > 0 && Date.now() - requestedAt < 1500;
+};
 const getEditor = () => {
   const mod = window[MODULE_KEY];
   return mod && typeof mod.y === "function" ? mod.y() : null;
@@ -176,7 +246,7 @@ const createGraphicLayerDirectly = (store, mod) => {
   const rel = activeDocument.type === "timeline" && activeGroup
     ? { type: "tile", id: activeGroup }
     : undefined;
-  const layer = mod.aY.create({
+  const buildLayer = () => mod.aY.create({
     name,
     type: mod.aX.LAYER_GRAPHIC,
     width: activeDocument.width,
@@ -184,6 +254,7 @@ const createGraphicLayerDirectly = (store, mod) => {
     rel
   });
   const commitInsert = () => {
+    const layer = buildLayer();
     store.commit("insertLayerAtIndex", { index: nextIndex, layer });
   };
 
@@ -249,6 +320,9 @@ const isNewLayerModalElement = (element) => {
 };
 
 const suppressNewLayerModalIfNeeded = (store, mod, sourceNode = null) => {
+  if (!hasPendingDirectGraphicLayerAdd()) {
+    return false;
+  }
   const hostRoot = getHostRoot();
   if (!hostRoot) {
     return false;
@@ -265,7 +339,6 @@ const suppressNewLayerModalIfNeeded = (store, mod, sourceNode = null) => {
   if (!modal) {
     return false;
   }
-  createGraphicLayerDirectly(store, mod);
   clearDirectGraphicLayerAdd();
   forceClosePhotoEditorModal(store);
   return true;
@@ -277,6 +350,13 @@ const ensureNotificationPatch = (store, mod) => {
   }
   store[ORIGINAL_COMMIT_KEY] = store.commit.bind(store);
   store.commit = (type, payload, options) => {
+    if (type === "openModal" && isNewLayerModalRequest(payload)) {
+      if (createGraphicLayerDirectly(store, mod)) {
+        clearDirectGraphicLayerAdd();
+        queueMicrotask(() => forceClosePhotoEditorModal(store));
+        return;
+      }
+    }
     if (window.__spriteForgeSuppressCutMoveNotification && type === "showNotification") {
       return;
     }
@@ -456,7 +536,19 @@ const ensureFileInputBridge = () => {
     if (label !== "레이어 추가" && label !== "Add layer") {
       return;
     }
-    return;
+    const store = getStore();
+    const mod = window[MODULE_KEY];
+    markDirectGraphicLayerAdd();
+    if (!store || !mod || !createGraphicLayerDirectly(store, mod)) {
+      return;
+    }
+    clearDirectGraphicLayerAdd();
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === "function") {
+      event.stopImmediatePropagation();
+    }
+    queueMicrotask(() => forceClosePhotoEditorModal(store));
   };
 
   const onFileInputClick = async (event) => {
@@ -517,10 +609,8 @@ const ensureFileInputBridge = () => {
     }
   };
 
-  document.addEventListener("pointerdown", onDirectGraphicLayerAdd, true);
   document.addEventListener("click", onFileInputClick, true);
   window[FILE_BRIDGE_CLEANUP_KEY] = () => {
-    document.removeEventListener("pointerdown", onDirectGraphicLayerAdd, true);
     document.removeEventListener("click", onFileInputClick, true);
     window[FILE_BRIDGE_CLEANUP_KEY] = null;
   };
@@ -893,6 +983,20 @@ const clampCropRect = (rect, activeDocument) => {
   const x = clampValue(Math.round(rect.x || 0), 0, maxWidth - width);
   const y = clampValue(Math.round(rect.y || 0), 0, maxHeight - height);
   return { x, y, width, height };
+};
+
+const createDefaultCropRect = (activeDocument) => {
+  if (!activeDocument) {
+    return null;
+  }
+  const width = Math.max(1, Math.round(activeDocument.width * 0.8));
+  const height = Math.max(1, Math.round(activeDocument.height * 0.8));
+  return clampCropRect({
+    x: Math.round((activeDocument.width - width) / 2),
+    y: Math.round((activeDocument.height - height) / 2),
+    width,
+    height
+  }, activeDocument);
 };
 
 const isPointInsideCropRect = (point, rect) => (
@@ -1315,111 +1419,6 @@ const getToolbarButtons = () => {
     .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top);
 };
 
-const loadToolbarLayout = () => {
-  try {
-    const saved = window.localStorage.getItem(TOOLBAR_LAYOUT_KEY);
-    if (saved === "single" || saved === "double" || saved === "hidden") {
-      return saved;
-    }
-  } catch (_error) {
-    // Ignore malformed local preferences.
-  }
-  return "single";
-};
-
-const saveToolbarLayout = (layout) => {
-  window[TOOLBAR_LAYOUT_KEY] = layout;
-  try {
-    window.localStorage.setItem(TOOLBAR_LAYOUT_KEY, layout);
-  } catch (_error) {
-    // Ignore storage write failures.
-  }
-};
-
-const applyToolbarLayout = (requestedLayout = null) => {
-  const layout = requestedLayout || window[TOOLBAR_LAYOUT_KEY] || loadToolbarLayout();
-  const buttons = getToolbarButtons();
-  if (!buttons.length) {
-    return;
-  }
-
-  saveToolbarLayout(layout);
-
-  const store = getStore();
-  if (store && typeof store.commit === "function") {
-    store.commit("setToolboxOpened", layout !== "hidden");
-  }
-
-  const [toggleButton, ...toolButtons] = buttons;
-  const container = toggleButton.parentElement instanceof HTMLElement ? toggleButton.parentElement : null;
-  const shell = container && container.parentElement instanceof HTMLElement ? container.parentElement : null;
-  const rail = shell && shell.parentElement instanceof HTMLElement ? shell.parentElement : null;
-
-  toggleButton.dataset.spriteForgeToolbarLayout = layout;
-  toggleButton.setAttribute(
-    "title",
-    layout === "double" ? "도구 패널: 2열" : layout === "hidden" ? "도구 패널: 숨김" : "도구 패널: 1열"
-  );
-  toggleButton.setAttribute("aria-label", toggleButton.getAttribute("title") || "도구 패널");
-
-  if (container) {
-    container.style.display = "grid";
-    container.style.gridTemplateColumns = layout === "double" ? "repeat(2, minmax(34px, 1fr))" : "1fr";
-    container.style.gridAutoRows = "minmax(36px, auto)";
-    container.style.gap = "6px";
-    container.style.justifyItems = "center";
-    container.style.alignContent = "start";
-    container.style.width = layout === "double" ? "84px" : "42px";
-    container.style.paddingTop = "4px";
-  }
-
-  for (const button of toolButtons) {
-    button.style.display = layout === "hidden" ? "none" : "";
-  }
-
-  for (const element of [shell, rail]) {
-    if (!(element instanceof HTMLElement)) {
-      continue;
-    }
-    element.style.overflow = "visible";
-    element.style.width = layout === "double" ? "92px" : "";
-    element.style.minWidth = layout === "double" ? "92px" : "";
-  }
-};
-
-const ensureToolbarLayoutToggle = () => {
-  const buttons = getToolbarButtons();
-  const toggleButton = buttons[0];
-  if (!(toggleButton instanceof HTMLButtonElement)) {
-    return null;
-  }
-
-  if (toggleButton.dataset.spriteForgeToolbarToggleBound !== "true") {
-    const cycleLayout = (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (typeof event.stopImmediatePropagation === "function") {
-        event.stopImmediatePropagation();
-      }
-
-      const current = window[TOOLBAR_LAYOUT_KEY] || loadToolbarLayout();
-      const next = current === "single" ? "double" : current === "double" ? "hidden" : "single";
-      applyToolbarLayout(next);
-    };
-
-    toggleButton.dataset.spriteForgeToolbarToggleBound = "true";
-    toggleButton.addEventListener("pointerdown", cycleLayout, true);
-    toggleButton.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        cycleLayout(event);
-      }
-    }, true);
-  }
-
-  applyToolbarLayout();
-  return toggleButton;
-};
-
 const ensureToolButton = () => {
   if (!document.getElementById(TOOL_STYLE_ID)) {
     const style = document.createElement("style");
@@ -1608,6 +1607,12 @@ const ensureCropToolButton = () => {
     setCropPreviousTool(store.getters ? store.getters.activeTool : null);
     store.commit("setActiveTool", { tool: null, document: activeDocument });
     setCropToolActive(true);
+    const nextState = {
+      ...(getCropState() || {}),
+      rect: null
+    };
+    setCropState(nextState);
+    syncCropOverlay(activeDocument, nextState);
   };
 
   button.addEventListener("pointerdown", activateCropTool, true);
@@ -1708,7 +1713,6 @@ const ensurePatched = async () => {
   window[MODULE_KEY] = mod;
   ensureNotificationPatch(getStore(), mod);
   ensureFileInputBridge();
-  ensureToolbarLayoutToggle();
   ensureToolButton();
   ensureCropToolButton();
   setToolActive(false);
@@ -1720,10 +1724,10 @@ const ensurePatched = async () => {
   let cropDragState = null;
 
   const observer = new MutationObserver(() => {
-    ensureToolbarLayoutToggle();
     ensureToolButton();
     ensureCropToolButton();
     const store = getStore();
+    suppressNewLayerModalIfNeeded(store, mod);
     const activeDocument = store && store.getters ? store.getters.activeDocument : null;
     const cropState = getCropState();
     if (isCropToolActive() && activeDocument && cropState) {
@@ -2253,6 +2257,9 @@ export function PhotoEditorPanel(): JSX.Element {
   const { t } = useI18n();
   const [editorKey, setEditorKey] = useState(0);
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const colorButtonRef = useRef<HTMLElement | null>(null);
+  const [proxyColor, setProxyColor] = useState("rgba(255, 0, 0, 1)");
+  const [proxyReady, setProxyReady] = useState(false);
 
   const { mainScriptUrl, styleUrl } = useMemo(() => {
     if (typeof window === "undefined") {
@@ -2343,6 +2350,57 @@ export function PhotoEditorPanel(): JSX.Element {
     };
   }, [mainScriptUrl, styleUrl]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || !hostRef.current) {
+      setProxyReady(false);
+      return;
+    }
+
+    const host = hostRef.current;
+    let frameId = 0;
+    const syncProxyState = () => {
+      colorButtonRef.current = findPhotoEditorColorButton(host);
+      setProxyReady(Boolean(colorButtonRef.current));
+      setProxyColor(readPhotoEditorColor(host));
+    };
+    const scheduleSync = () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        syncProxyState();
+      });
+    };
+
+    scheduleSync();
+    const observer = new MutationObserver(scheduleSync);
+    observer.observe(host, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "aria-hidden"]
+    });
+
+    return () => {
+      observer.disconnect();
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+      colorButtonRef.current = null;
+    };
+  }, [editorKey]);
+
+  const openProxyColorPicker = () => {
+    const source = colorButtonRef.current ?? findPhotoEditorColorButton(hostRef.current);
+    if (!source) {
+      return;
+    }
+    source.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    source.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+    source.click();
+  };
+
   return (
     <section className="panel photo-editor-page">
       <div className="photo-editor-header">
@@ -2351,6 +2409,16 @@ export function PhotoEditorPanel(): JSX.Element {
           <p className="muted">{t("photo_editor_desc")}</p>
         </div>
         <div className="row-buttons">
+          <button
+            type="button"
+            className="photo-editor-color-proxy"
+            aria-label="Color palette"
+            title="Color palette"
+            onClick={openProxyColorPicker}
+            disabled={!proxyReady}
+          >
+            <span className="photo-editor-color-proxy-swatch" style={{ backgroundColor: proxyColor }} />
+          </button>
           <button type="button" onClick={() => setEditorKey((value) => value + 1)}>
             {t("photo_editor_reload")}
           </button>
