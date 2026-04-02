@@ -8,6 +8,7 @@ core/dist/
 .scratch/
 .spriteforge/
 *.zip
+Sprite Studio.exe
 tmp-*/
 tmp_*.png
 _external/bitmappery/

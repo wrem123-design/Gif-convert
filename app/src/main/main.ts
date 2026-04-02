@@ -55,6 +55,7 @@ const SHUTDOWN_TIMEOUT_MS = 3000;
 const SINGLE_INSTANCE_RETRY_MS = 250;
 const SINGLE_INSTANCE_TIMEOUT_MS = 10000;
 const APP_SETTINGS_FILE = "settings.json";
+const APP_ICON_RELATIVE_PATH = path.join("build", "icon.ico");
 const pending = new Map<
   string,
   {
@@ -99,6 +100,18 @@ function resolveWorkerEntry(): string {
     return unpackedPath;
   }
   return path.join(__dirname, "processorWorkerBootstrap.js");
+}
+
+function resolveAppIconPath(): string | undefined {
+  const packagedPath = path.join(process.resourcesPath, APP_ICON_RELATIVE_PATH);
+  if (app.isPackaged && fs.pathExistsSync(packagedPath)) {
+    return packagedPath;
+  }
+  const devPath = path.join(app.getAppPath(), APP_ICON_RELATIVE_PATH);
+  if (fs.pathExistsSync(devPath)) {
+    return devPath;
+  }
+  return undefined;
 }
 
 function getAppSettingsPath(): string {
@@ -204,6 +217,7 @@ function createWindow(options?: { startMinimized?: boolean }): BrowserWindow {
     minHeight: 700,
     backgroundColor: "#1E1E1E",
     autoHideMenuBar: true,
+    icon: resolveAppIconPath(),
     show: !startMinimized,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

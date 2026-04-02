@@ -3,6 +3,7 @@ productName: Sprite Studio
 electronVersion: 31.7.7
 directories:
   output: release
+icon: build/icon.ico
 files:
   - dist/main/**/*
   - dist/renderer/**/*
@@ -11,6 +12,7 @@ asar: true
 asarUnpack:
   - dist/main/processorWorkerBootstrap.js
 win:
+  icon: build/icon.ico
   signAndEditExecutable: false
   target:
     - nsis
