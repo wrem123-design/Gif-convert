@@ -84,6 +84,7 @@ GitHub Releases:
 
 ## Release Notes
 
+- [`docs/releases/v1.0.6.md`](./docs/releases/v1.0.6.md)
 - [`docs/releases/v1.0.5.md`](./docs/releases/v1.0.5.md)
 - [`docs/releases/v1.0.4.md`](./docs/releases/v1.0.4.md)
 
@@ -95,5 +96,6 @@ GitHub Releases:
 ## Related Docs
 - [`docs/IOPAINT_SETUP.md`](./docs/IOPAINT_SETUP.md)
 - [`docs/INSTALL.md`](./docs/INSTALL.md)
+- [`docs/releases/v1.0.6.md`](./docs/releases/v1.0.6.md)
 - [`docs/releases/v1.0.5.md`](./docs/releases/v1.0.5.md)
 - [`docs/releases/v1.0.4.md`](./docs/releases/v1.0.4.md)

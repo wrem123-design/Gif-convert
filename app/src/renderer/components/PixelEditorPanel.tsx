@@ -18,16 +18,6 @@ const pixelToolLabel: Record<PixelTool, string> = {
 
 type ToolbarIcon = PixelTool | "undo" | "redo";
 
-const pixelToolHelp: Record<PixelTool, string> = {
-  move: "캔버스와 선택 영역의 위치를 조정합니다.",
-  pencil: "픽셀 단위로 직접 그립니다.",
-  eraser: "투명 픽셀로 지웁니다.",
-  eyedropper: "캔버스 색을 바로 가져옵니다.",
-  fill: "인접한 같은 색 영역을 채웁니다.",
-  clone: "Alt+클릭으로 기준점을 잡고 복제합니다.",
-  select: "영역을 선택하고 이동/삭제/복제합니다."
-};
-
 function ToolbarIconSvg(props: { name: ToolbarIcon }): JSX.Element {
   const common = {
     fill: "none",
@@ -375,7 +365,6 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
   const writeImageDataUrl = useEditorStore((s) => s.writeImageDataUrl);
   const updateClip = useEditorStore((s) => s.updateClip);
   const setActiveHelpTopic = useEditorStore((s) => s.setActiveHelpTopic);
-  const requestFitView = useEditorStore((s) => s.requestFitView);
   const fitViewToken = useEditorStore((s) => s.fitViewToken);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
@@ -407,6 +396,7 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
   const [referenceImageSize, setReferenceImageSize] = useState({ width: 1, height: 1 });
   const [overlayShiftPx, setOverlayShiftPx] = useState(0);
   const [stageMetrics, setStageMetrics] = useState({ width: 1, height: 1 });
+  const [middlePanning, setMiddlePanning] = useState(false);
   const [savingAllFrames, setSavingAllFrames] = useState(false);
   const [saveAllProgress, setSaveAllProgress] = useState<{
     done: number;
@@ -420,7 +410,6 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
     running: false
   });
   const [saveAllResultMessage, setSaveAllResultMessage] = useState("");
-  const [showShortcutGuide, setShowShortcutGuide] = useState(false);
 
   const clipboard = useRef<ImageData | null>(null);
   const drag = useRef<
@@ -578,31 +567,6 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!isTypingTarget(event.target)) {
-        if (event.key === "v") setTool("move");
-        if (event.key === "b") setTool("pencil");
-        if (event.key === "e") setTool("eraser");
-        if (event.key === "i") setTool("eyedropper");
-        if (event.key === "g") setTool("fill");
-        if (event.key === "c") setTool("clone");
-        if (event.key === "m") setTool("select");
-        if (event.key === "0") {
-          event.preventDefault();
-          requestFitView();
-          return;
-        }
-        if (event.key === "+" || event.key === "=") {
-          event.preventDefault();
-          setScale((prev) => Number(Math.min(32, prev * 1.1).toFixed(3)));
-          return;
-        }
-        if (event.key === "-") {
-          event.preventDefault();
-          setScale((prev) => Number(Math.max(0.1, prev * 0.9).toFixed(3)));
-          return;
-        }
-      }
-
       if (isTypingTarget(event.target)) {
         return;
       }
@@ -703,7 +667,7 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [requestFitView, selection]);
+  }, [selection]);
 
   useEffect(() => {
     const root = stageRootRef.current;
@@ -731,6 +695,14 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
 
   useEffect(() => {
     const onPointerMove = (event: PointerEvent) => {
+      if (panDragRef.current) {
+        const dx = event.clientX - panDragRef.current.startX;
+        const dy = event.clientY - panDragRef.current.startY;
+        setViewPan({
+          x: panDragRef.current.baseX + dx,
+          y: panDragRef.current.baseY + dy
+        });
+      }
       if (!splitDragRef.current) {
         return;
       }
@@ -739,14 +711,18 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
       setOverlayShiftPx(clamp(drag.startShiftPx + delta, drag.minShiftPx, drag.maxShiftPx));
     };
     const onPointerUp = () => {
+      panDragRef.current = null;
+      setMiddlePanning(false);
       splitDragRef.current = null;
     };
 
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
     return () => {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
     };
   }, []);
 
@@ -839,10 +815,14 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
     if (!canvasRef.current) {
       return;
     }
+    if (event.button === 1) {
+      return;
+    }
     event.currentTarget.setPointerCapture(event.pointerId);
 
-    const isPan = event.button === 1 || (event.button === 0 && spaceHeld);
+    const isPan = event.button === 0 && spaceHeld;
     if (isPan) {
+      event.preventDefault();
       panDragRef.current = {
         startX: event.clientX,
         startY: event.clientY,
@@ -954,16 +934,6 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (panDragRef.current) {
-      const dx = event.clientX - panDragRef.current.startX;
-      const dy = event.clientY - panDragRef.current.startY;
-      setViewPan({
-        x: panDragRef.current.baseX + dx,
-        y: panDragRef.current.baseY + dy
-      });
-      return;
-    }
-
     if (!canvasRef.current || !drag.current) {
       return;
     }
@@ -1029,10 +999,25 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
 
   const onPointerUp = () => {
     panDragRef.current = null;
+    setMiddlePanning(false);
     drag.current = null;
     if (selection) {
       setSelection(normalizeRect(selection));
     }
+  };
+
+  const onStagePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 1) {
+      return;
+    }
+    event.preventDefault();
+    panDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      baseX: viewPan.x,
+      baseY: viewPan.y
+    };
+    setMiddlePanning(true);
   };
 
   const onStageWheel = (event: React.WheelEvent<HTMLDivElement>) => {
@@ -1047,7 +1032,7 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
       return;
     }
 
-    if (event.altKey || event.ctrlKey || event.metaKey) {
+    if (!event.ctrlKey && !event.metaKey) {
       setViewPan((prev) => ({
         x: prev.x - event.deltaX,
         y: prev.y - event.deltaY
@@ -1322,10 +1307,6 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
   return (
     <section className={`panel viewport-panel pixel-panel ${allowReference ? "asset-pixel-panel" : "sprite-pixel-panel"}`}>
       <div className="pixel-toolbar">
-        <div className="pixel-toolbar-group pixel-toolbar-group--summary">
-          <strong>{pixelToolLabel[tool]}</strong>
-          <span className="muted">{pixelToolHelp[tool]}</span>
-        </div>
         <button
           className="icon-tool-btn"
           title="실행 취소"
@@ -1375,15 +1356,8 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
           <span>{t("prev_overlay")}</span>
           <input type="range" min={0} max={0.8} step={0.05} value={overlayOpacity} onChange={(e) => setOverlayOpacity(Number(e.target.value))} />
         </label>
-        <div className="pixel-toolbar-group">
-          <button type="button" onClick={() => setScale((prev) => Number(Math.max(0.1, prev * 0.9).toFixed(3)))}>-</button>
-          <button type="button" onClick={() => requestFitView()}>{t("fit_view")}</button>
-          <button type="button" onClick={() => setScale((prev) => Number(Math.min(32, prev * 1.1).toFixed(3)))}>+</button>
-          <span className="muted">{t("zoom")}: {Math.round(scale * 100)}%</span>
-        </div>
         <button onClick={selectWholeDrawing}>{t("pixel_select_opaque_bounds")}</button>
         <button className={showGrid ? "active" : ""} onClick={() => setShowGrid((prev) => !prev)}>{t("pixel_grid_toggle")}</button>
-        <button type="button" onClick={() => setShowShortcutGuide((prev) => !prev)}>{t("pixel_shortcuts_toggle")}</button>
         <span className="tool-divider" aria-hidden="true" />
         <button className="accent" onClick={() => void save()}>{t("save_frame")}</button>
         <button
@@ -1405,18 +1379,16 @@ export function PixelEditorPanel(props: PixelEditorPanelProps): JSX.Element {
         {saveAllResultMessage ? <span className="muted">{saveAllResultMessage}</span> : null}
       </div>
 
-      {showShortcutGuide ? (
-        <div className="pixel-shortcut-guide">
-          <span>{t("pixel_shortcuts_title")}</span>
-          <span className="muted">{t("pixel_shortcuts_desc")}</span>
-        </div>
-      ) : null}
-
       <div className="pixel-stage" ref={stageRootRef} style={{ background: stageBackgroundColor }}>
         {showGrid ? <div className="pixel-stage-grid-overlay" style={sharedGridStyle} /> : null}
 
         <div className="pixel-stage-content">
-          <div className="pixel-compare-stage" ref={stageRef} onWheel={onStageWheel}>
+          <div
+            className={`pixel-compare-stage ${middlePanning ? "middle-panning" : ""}`}
+            ref={stageRef}
+            onWheel={onStageWheel}
+            onPointerDown={onStagePointerDown}
+          >
             <div
               className="pixel-canvas-wrap pixel-main-canvas-wrap"
               style={{

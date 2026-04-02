@@ -283,6 +283,7 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const frameShellRef = useRef<HTMLDivElement | null>(null);
   const nativeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const nativeCursorRef = useRef<HTMLDivElement | null>(null);
   const nativeMaskCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const nativeImageRef = useRef<HTMLImageElement | null>(null);
   const nativeMaskDirtyRef = useRef(false);
@@ -467,6 +468,42 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
     }
   };
 
+  const hideNativeCursor = (): void => {
+    if (nativeCursorRef.current) {
+      nativeCursorRef.current.style.opacity = "0";
+    }
+  };
+
+  const updateNativeCursor = (canvas: HTMLCanvasElement, clientX: number, clientY: number): void => {
+    const cursor = nativeCursorRef.current;
+    if (!cursor || !canvas.width || !canvas.height) {
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      hideNativeCursor();
+      return;
+    }
+
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+      hideNativeCursor();
+      return;
+    }
+
+    const scaleX = rect.width / canvas.width;
+    const scaleY = rect.height / canvas.height;
+    const diameter = Math.max(nativeBrushSize * Math.min(scaleX, scaleY), 1);
+
+    cursor.style.width = `${diameter}px`;
+    cursor.style.height = `${diameter}px`;
+    cursor.style.left = `${x}px`;
+    cursor.style.top = `${y}px`;
+    cursor.style.opacity = "1";
+    cursor.dataset.eraseMode = nativeEraseMode ? "true" : "false";
+  };
+
   const clearNativeMask = (): void => {
     const maskCanvas = nativeMaskCanvasRef.current;
     if (!maskCanvas) {
@@ -570,6 +607,7 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
       return;
     }
     const canvas = event.currentTarget;
+    updateNativeCursor(canvas, event.clientX, event.clientY);
     const point = getCanvasPoint(canvas, event.clientX, event.clientY);
     nativeDrawingRef.current = true;
     nativeLastPointRef.current = point;
@@ -578,6 +616,7 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
   };
 
   const handleNativeCanvasPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+    updateNativeCursor(event.currentTarget, event.clientX, event.clientY);
     if (!nativeDrawingRef.current) {
       return;
     }
@@ -590,11 +629,19 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
 
   const finishNativeStroke = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
     if (!nativeDrawingRef.current) {
+      if (event.type === "pointerleave") {
+        hideNativeCursor();
+      }
       return;
     }
     nativeDrawingRef.current = false;
     nativeLastPointRef.current = null;
     event.currentTarget.releasePointerCapture(event.pointerId);
+    if (event.type === "pointerleave") {
+      hideNativeCursor();
+    } else {
+      updateNativeCursor(event.currentTarget, event.clientX, event.clientY);
+    }
   };
 
   const pickNativeImage = async (): Promise<void> => {
@@ -660,6 +707,23 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
     clearNativeMask();
     setNativeSeed(null);
   };
+
+  useEffect(() => {
+    const canvas = nativeCanvasRef.current;
+    const lastPoint = nativeLastPointRef.current;
+    if (!canvas || !lastPoint) {
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height || !canvas.width || !canvas.height) {
+      return;
+    }
+    updateNativeCursor(
+      canvas,
+      rect.left + (lastPoint.x / canvas.width) * rect.width,
+      rect.top + (lastPoint.y / canvas.height) * rect.height
+    );
+  }, [nativeBrushSize, nativeEraseMode, nativeWorkingDataUrl]);
 
   const installIOPaint = (): void => {
     void window.spriteForge.ensureIOPaintInstalled().catch(() => {
@@ -1251,14 +1315,17 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
 
                   <div className="iopaint-native-stage">
                     {nativeWorkingDataUrl ? (
-                      <canvas
-                        ref={nativeCanvasRef}
-                        className="iopaint-native-canvas"
-                        onPointerDown={handleNativeCanvasPointerDown}
-                        onPointerMove={handleNativeCanvasPointerMove}
-                        onPointerUp={finishNativeStroke}
-                        onPointerLeave={finishNativeStroke}
-                      />
+                      <div className="iopaint-native-canvas-wrap">
+                        <canvas
+                          ref={nativeCanvasRef}
+                          className="iopaint-native-canvas"
+                          onPointerDown={handleNativeCanvasPointerDown}
+                          onPointerMove={handleNativeCanvasPointerMove}
+                          onPointerUp={finishNativeStroke}
+                          onPointerLeave={finishNativeStroke}
+                        />
+                        <div ref={nativeCursorRef} className="iopaint-native-brush-cursor" aria-hidden="true" />
+                      </div>
                     ) : (
                       <div className="iopaint-empty-state">
                         <strong>{t("iopaint_native_stage_title")}</strong>

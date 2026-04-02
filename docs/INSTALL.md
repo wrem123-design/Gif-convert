@@ -61,5 +61,5 @@ npm run package:portable
 
 Output folder:
 - [`app/release`](../app/release)
-- Installer build: `Sprite Studio Setup 1.0.5.exe`
-- Portable build: `Sprite Studio 1.0.5.exe`
+- Installer build: `Sprite Studio Setup 1.0.6.exe`
+- Portable build: `Sprite Studio 1.0.6.exe`

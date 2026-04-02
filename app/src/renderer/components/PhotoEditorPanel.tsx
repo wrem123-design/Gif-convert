@@ -2255,7 +2255,7 @@ ensurePatched();
 
 export function PhotoEditorPanel(): JSX.Element {
   const { t } = useI18n();
-  const [editorKey, setEditorKey] = useState(0);
+  const [editorKey] = useState(0);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const colorButtonRef = useRef<HTMLElement | null>(null);
   const [proxyColor, setProxyColor] = useState("rgba(255, 0, 0, 1)");
@@ -2418,9 +2418,6 @@ export function PhotoEditorPanel(): JSX.Element {
             disabled={!proxyReady}
           >
             <span className="photo-editor-color-proxy-swatch" style={{ backgroundColor: proxyColor }} />
-          </button>
-          <button type="button" onClick={() => setEditorKey((value) => value + 1)}>
-            {t("photo_editor_reload")}
           </button>
         </div>
       </div>

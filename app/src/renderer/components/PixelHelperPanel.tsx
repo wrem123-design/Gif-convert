@@ -37,7 +37,6 @@ interface HelperResult {
 }
 
 type BrushMode = "draw" | "erase";
-type PixelHelperPreset = "icon" | "avatar" | "texture" | "grid";
 
 interface PixelPoint {
   x: number;
@@ -55,14 +54,17 @@ const imageAccept = "image/png,image/jpeg,image/jpg,image/webp,image/gif,image/b
 const presetPixelSizes = [16, 32, 64, 128, 200];
 const presetUpscaleSizes = [200, 512, 1024, 2048];
 const editorHistoryLimit = 40;
-const pixelHelperLayoutPrefsKey = "sprite_forge_pixel_helper_layout_v1";
-const defaultLowerPaneHeight = 328;
-const minLowerPaneHeight = 180;
+const pixelHelperLayoutPrefsKey = "sprite_forge_pixel_helper_layout_v2";
+const defaultPreviewPaneHeight = 380;
+const defaultEditorPaneHeight = 520;
 const minPreviewPaneHeight = 220;
+const maxPreviewPaneHeight = 720;
+const minEditorPaneHeight = 320;
+const maxEditorPaneHeight = 1200;
 
 interface PixelHelperLayoutPrefs {
-  lowerPaneHeight: number;
-  lowerPaneCollapsed: boolean;
+  previewPaneHeight: number;
+  editorPaneHeight: number;
 }
 
 function makeId(prefix: string): string {
@@ -88,8 +90,8 @@ function readPositiveInt(value: string, fallback: number): number {
 function loadPixelHelperLayoutPrefs(): PixelHelperLayoutPrefs {
   if (typeof window === "undefined") {
     return {
-      lowerPaneHeight: defaultLowerPaneHeight,
-      lowerPaneCollapsed: false
+      previewPaneHeight: defaultPreviewPaneHeight,
+      editorPaneHeight: defaultEditorPaneHeight
     };
   }
 
@@ -97,22 +99,24 @@ function loadPixelHelperLayoutPrefs(): PixelHelperLayoutPrefs {
     const raw = window.localStorage.getItem(pixelHelperLayoutPrefsKey);
     if (!raw) {
       return {
-        lowerPaneHeight: defaultLowerPaneHeight,
-        lowerPaneCollapsed: false
+        previewPaneHeight: defaultPreviewPaneHeight,
+        editorPaneHeight: defaultEditorPaneHeight
       };
     }
 
     const parsed = JSON.parse(raw) as Partial<PixelHelperLayoutPrefs>;
     return {
-      lowerPaneHeight: typeof parsed.lowerPaneHeight === "number"
-        ? clamp(Math.round(parsed.lowerPaneHeight), minLowerPaneHeight, 960)
-        : defaultLowerPaneHeight,
-      lowerPaneCollapsed: typeof parsed.lowerPaneCollapsed === "boolean" ? parsed.lowerPaneCollapsed : false
+      previewPaneHeight: typeof parsed.previewPaneHeight === "number"
+        ? clamp(Math.round(parsed.previewPaneHeight), minPreviewPaneHeight, maxPreviewPaneHeight)
+        : defaultPreviewPaneHeight,
+      editorPaneHeight: typeof parsed.editorPaneHeight === "number"
+        ? clamp(Math.round(parsed.editorPaneHeight), minEditorPaneHeight, maxEditorPaneHeight)
+        : defaultEditorPaneHeight
     };
   } catch {
     return {
-      lowerPaneHeight: defaultLowerPaneHeight,
-      lowerPaneCollapsed: false
+      previewPaneHeight: defaultPreviewPaneHeight,
+      editorPaneHeight: defaultEditorPaneHeight
     };
   }
 }
@@ -370,8 +374,7 @@ export function PixelHelperPanel(): JSX.Element {
   const gridCanvasRef = useRef<HTMLCanvasElement>(document.createElement("canvas"));
   const isPaintingRef = useRef(false);
   const resultsRef = useRef<HelperResult[]>([]);
-  const lowerPaneDragRef = useRef<{ startY: number; startHeight: number } | null>(null);
-  const lastExpandedLowerPaneHeightRef = useRef(initialLayoutPrefs.lowerPaneHeight);
+  const sectionResizeRef = useRef<{ target: "preview" | "editor"; startY: number; startHeight: number } | null>(null);
 
   const [currentInputs, setCurrentInputs] = useState<HelperInputImage[]>([]);
   const [currentLoadedInput, setCurrentLoadedInput] = useState<HelperInputImage | null>(null);
@@ -406,77 +409,58 @@ export function PixelHelperPanel(): JSX.Element {
   const [statusText, setStatusText] = useState(buildSelectedSizeStatus(64, 1024, false));
   const [batchSummary, setBatchSummary] = useState("이미지 미리보기가 이 영역에 표시됩니다.");
   const [resultInfo, setResultInfo] = useState("선택한 파일을 모두 처리하면 결과 목록이 여기에 표시됩니다.");
-  const [lowerPaneHeight, setLowerPaneHeight] = useState(initialLayoutPrefs.lowerPaneHeight);
-  const [lowerPaneCollapsed, setLowerPaneCollapsed] = useState(initialLayoutPrefs.lowerPaneCollapsed);
-
-  const getMaxLowerPaneHeight = () => {
-    const totalHeight = previewLayoutRef.current?.clientHeight ?? 0;
-    return Math.max(minLowerPaneHeight, totalHeight - minPreviewPaneHeight - 14);
-  };
+  const [previewPaneHeight, setPreviewPaneHeight] = useState(initialLayoutPrefs.previewPaneHeight);
+  const [editorPaneHeight, setEditorPaneHeight] = useState(initialLayoutPrefs.editorPaneHeight);
 
   useEffect(() => {
     resultsRef.current = downloadResults;
   }, [downloadResults]);
 
   useEffect(() => {
-    if (!lowerPaneCollapsed) {
-      lastExpandedLowerPaneHeightRef.current = lowerPaneHeight;
-    }
-  }, [lowerPaneCollapsed, lowerPaneHeight]);
-
-  useEffect(() => {
     try {
       window.localStorage.setItem(pixelHelperLayoutPrefsKey, JSON.stringify({
-        lowerPaneHeight: Math.round(lowerPaneHeight),
-        lowerPaneCollapsed
+        previewPaneHeight: Math.round(previewPaneHeight),
+        editorPaneHeight: Math.round(editorPaneHeight)
       }));
     } catch {
       // Ignore storage write failures.
     }
-  }, [lowerPaneCollapsed, lowerPaneHeight]);
-
-  useEffect(() => {
-    const root = previewLayoutRef.current;
-    if (!root) {
-      return;
-    }
-
-    const clampHeightToViewport = () => {
-      const maxHeight = getMaxLowerPaneHeight();
-      setLowerPaneHeight((prev) => clamp(prev, minLowerPaneHeight, maxHeight));
-    };
-
-    clampHeightToViewport();
-    const observer = new ResizeObserver(clampHeightToViewport);
-    observer.observe(root);
-    return () => observer.disconnect();
-  }, []);
+  }, [editorPaneHeight, previewPaneHeight]);
 
   useEffect(() => {
     const onPointerMove = (event: PointerEvent) => {
-      const drag = lowerPaneDragRef.current;
+      const drag = sectionResizeRef.current;
       if (!drag) {
         return;
       }
-      const nextHeight = clamp(
-        drag.startHeight - (event.clientY - drag.startY),
-        minLowerPaneHeight,
-        getMaxLowerPaneHeight()
-      );
-      setLowerPaneCollapsed(false);
-      setLowerPaneHeight(Math.round(nextHeight));
+      const deltaY = event.clientY - drag.startY;
+      if (drag.target === "preview") {
+        setPreviewPaneHeight(Math.round(clamp(
+          drag.startHeight + deltaY,
+          minPreviewPaneHeight,
+          maxPreviewPaneHeight
+        )));
+        return;
+      }
+      setEditorPaneHeight(Math.round(clamp(
+        drag.startHeight + deltaY,
+        minEditorPaneHeight,
+        maxEditorPaneHeight
+      )));
     };
 
     const onPointerUp = () => {
-      lowerPaneDragRef.current = null;
+      sectionResizeRef.current = null;
       document.body.classList.remove("pixel-helper-resizing");
     };
 
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
     return () => {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
       document.body.classList.remove("pixel-helper-resizing");
     };
   }, []);
@@ -669,50 +653,6 @@ export function PixelHelperPanel(): JSX.Element {
 
   const appendResult = (result: HelperResult) => {
     setDownloadResults((prev) => [...prev, result]);
-  };
-
-  const removeResult = (resultId: string) => {
-    setDownloadResults((prev) => {
-      const target = prev.find((entry) => entry.id === resultId);
-      if (target) {
-        URL.revokeObjectURL(target.url);
-      }
-      return prev.filter((entry) => entry.id !== resultId);
-    });
-  };
-
-  const clearResults = () => {
-    replaceResults([]);
-    setResultInfo("결과 목록을 비웠습니다.");
-    setBatchSummary("새 작업을 기다리는 중입니다.");
-    setStatusText("결과 목록을 정리했습니다.");
-  };
-
-  const applyWorkflowPreset = (preset: PixelHelperPreset) => {
-    if (preset === "grid") {
-      setCustomGridCount("64");
-      setCustomGridExportSize("2048");
-      setCustomGridThickness("2");
-      setCustomGridActive(true);
-      setBatchSummary("그리드 기본 프리셋을 불러왔습니다.");
-      setStatusText("그리드 생성 설정을 준비했습니다.");
-      return;
-    }
-
-    const next = preset === "icon"
-      ? { pixel: 64, upscale: 512, summary: "아이콘 작업용 프리셋을 적용했습니다." }
-      : preset === "avatar"
-        ? { pixel: 128, upscale: 1024, summary: "아바타 작업용 프리셋을 적용했습니다." }
-        : { pixel: 200, upscale: 2048, summary: "텍스처 작업용 프리셋을 적용했습니다." };
-
-    setSelectedPixelSize(next.pixel);
-    setSelectedUpscaleSize(next.upscale);
-    setCustomShrinkSize(String(next.pixel));
-    setCustomUpscaleSize(String(next.upscale));
-    setCustomShrinkActive(false);
-    setCustomUpscaleActive(false);
-    setBatchSummary(next.summary);
-    setStatusText(buildSelectedSizeStatus(next.pixel, next.upscale, Boolean(currentLoadedInput)));
   };
 
   const setLoadedImage = (image: HTMLImageElement, input: HelperInputImage) => {
@@ -1134,87 +1074,22 @@ export function PixelHelperPanel(): JSX.Element {
     ? `${editorImageData.width} x ${editorImageData.height} 픽셀 편집 중, 보기 확대 ${editorZoom}배, 도구: ${brushMode === "erase" ? "지우개" : "브러시"}, 브러시 크기: ${brushSize}px, 되돌리기 ${editorUndoStack.length}단계`
     : "현재 편집 캔버스가 비어 있습니다.";
 
-  const lowerPaneVisibleHeight = lowerPaneCollapsed ? 0 : clamp(lowerPaneHeight, minLowerPaneHeight, getMaxLowerPaneHeight());
-  const activePresetLabel = selectedUpscaleSize ? `${selectedPixelSize}px -> ${selectedUpscaleSize}px` : `${selectedPixelSize}px`;
-
-  const handleLowerPanePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (lowerPaneCollapsed) {
-      return;
-    }
+  const handleSectionResizeStart = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    target: "preview" | "editor"
+  ) => {
     event.preventDefault();
-    lowerPaneDragRef.current = {
+    sectionResizeRef.current = {
+      target,
       startY: event.clientY,
-      startHeight: lowerPaneVisibleHeight
+      startHeight: target === "preview" ? previewPaneHeight : editorPaneHeight
     };
     document.body.classList.add("pixel-helper-resizing");
-  };
-
-  const toggleLowerPaneCollapsed = () => {
-    if (lowerPaneCollapsed) {
-      setLowerPaneCollapsed(false);
-      setLowerPaneHeight(clamp(lastExpandedLowerPaneHeightRef.current, minLowerPaneHeight, getMaxLowerPaneHeight()));
-      return;
-    }
-    lastExpandedLowerPaneHeightRef.current = lowerPaneVisibleHeight;
-    setLowerPaneCollapsed(true);
   };
 
   return (
     <section className="panel pixel-helper-page">
       <div className="pixel-helper-shell">
-        <section className="pixel-helper-hero">
-          <div>
-            <h2>픽셀 에디터</h2>
-            <p className="muted">
-              최근접 이웃 축소/재확대, 그리드 PNG 생성, 픽셀 브러시 편집을 한 화면에서 처리합니다.
-            </p>
-          </div>
-          <div className="pixel-helper-status-chip">{statusText}</div>
-        </section>
-
-        <section className="pixel-helper-workflow panel">
-          <div className="pixel-helper-summary-cards">
-            <div className="pixel-helper-summary-card">
-              <span className="muted">입력</span>
-              <strong>{currentInputs.length}개</strong>
-            </div>
-            <div className="pixel-helper-summary-card">
-              <span className="muted">결과</span>
-              <strong>{downloadResults.length}개</strong>
-            </div>
-            <div className="pixel-helper-summary-card">
-              <span className="muted">현재 프리셋</span>
-              <strong>{activePresetLabel}</strong>
-            </div>
-          </div>
-          <div className="pixel-helper-workflow-row">
-            <div className="pixel-helper-workflow-presets">
-              <button type="button" onClick={() => applyWorkflowPreset("icon")}>아이콘 64→512</button>
-              <button type="button" onClick={() => applyWorkflowPreset("avatar")}>아바타 128→1024</button>
-              <button type="button" onClick={() => applyWorkflowPreset("texture")}>텍스처 200→2048</button>
-              <button type="button" onClick={() => applyWorkflowPreset("grid")}>그리드 기본값</button>
-            </div>
-            <div className="pixel-helper-workflow-actions">
-              <button type="button" onClick={clearResults} disabled={!downloadResults.length}>결과 비우기</button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCurrentInputs([]);
-                  setCurrentLoadedInput(null);
-                  setLoadedMeta(null);
-                  setSourceImageData(null);
-                  setPreviewPayload(null);
-                  setBatchSummary("입력 목록을 비웠습니다.");
-                  setStatusText("새 이미지를 기다리는 중입니다.");
-                }}
-                disabled={!currentInputs.length}
-              >
-                입력 목록 비우기
-              </button>
-            </div>
-          </div>
-        </section>
-
         <section className="pixel-helper-grid">
           <div className="pixel-helper-side panel">
             <div
@@ -1372,6 +1247,11 @@ export function PixelHelperPanel(): JSX.Element {
                 첫 번째 이미지는 아래 편집 캔버스에서 픽셀 단위로 직접 수정할 수 있습니다.
               </div>
 
+              <div className="pixel-helper-status-card">
+                <strong>현재 설정</strong>
+                <span>{statusText}</span>
+              </div>
+
               <details className={`pixel-helper-grid-tools ${customGridActive ? "custom-active" : ""}`}>
                 <summary onClick={() => setCustomGridActive(true)}>그리드 PNG 생성 도구</summary>
                 <div className="pixel-helper-grid-tools-body">
@@ -1452,9 +1332,9 @@ export function PixelHelperPanel(): JSX.Element {
             </div>
           </div>
 
-          <div className="pixel-helper-preview" ref={previewLayoutRef}>
+          <div className="pixel-helper-main" ref={previewLayoutRef}>
             <div className="panel pixel-helper-preview-card">
-              <div className="pixel-helper-preview-canvas">
+              <div className="pixel-helper-preview-canvas" style={{ height: `${previewPaneHeight}px` }}>
                 {previewPayload ? (
                   <canvas ref={previewCanvasRef} />
                 ) : (
@@ -1468,237 +1348,227 @@ export function PixelHelperPanel(): JSX.Element {
               <div className="pixel-helper-summary">{batchSummary}</div>
             </div>
 
-            <div className={`pixel-helper-preview-splitter ${lowerPaneCollapsed ? "collapsed" : ""}`}>
-              <div
-                className={`pixel-helper-preview-grab ${lowerPaneCollapsed ? "collapsed" : ""}`}
-                onPointerDown={handleLowerPanePointerDown}
-                role="separator"
-                aria-orientation="horizontal"
-                aria-label="아래 편집 패널 높이 조절"
-              >
-                <span />
-              </div>
-              <button
-                type="button"
-                className="pixel-helper-preview-toggle"
-                onClick={toggleLowerPaneCollapsed}
-                aria-label={lowerPaneCollapsed ? "아래 편집 패널 펼치기" : "아래 편집 패널 접기"}
-                title={lowerPaneCollapsed ? "아래 편집 패널 펼치기" : "아래 편집 패널 접기"}
-              >
-                <span aria-hidden="true">{lowerPaneCollapsed ? "▴" : "▾"}</span>
-              </button>
+            <div
+              className="pixel-helper-section-resizer"
+              onPointerDown={(event) => handleSectionResizeStart(event, "preview")}
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="미리보기 영역 높이 조절"
+            >
+              <span />
             </div>
 
-            <div
-              className={`pixel-helper-lower-stack ${lowerPaneCollapsed ? "collapsed" : ""}`}
-              style={{ height: `${lowerPaneVisibleHeight}px` }}
-              aria-hidden={lowerPaneCollapsed}
-            >
-              <div className="panel pixel-helper-editor-card">
-                <div className="pixel-helper-panel-header">
-                  <h2>픽셀 편집</h2>
-                  <div className="muted">{editorStatusText}</div>
-                </div>
+            <div className="panel pixel-helper-editor-card" style={{ minHeight: `${editorPaneHeight}px` }}>
+              <div className="pixel-helper-panel-header single">
+                <h2>픽셀 편집</h2>
+              </div>
 
-                <div className="pixel-helper-toolbar">
-                  <label>
-                    브러시 색상
-                    <input type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} />
-                  </label>
-                  <button type="button" onClick={() => void handleDownloadEdited()}>현재 편집본 다운로드</button>
+              <div className="pixel-helper-toolbar">
+                <label>
+                  브러시 색상
+                  <input type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} />
+                </label>
+                <button type="button" onClick={() => void handleDownloadEdited()}>현재 편집본 다운로드</button>
+              </div>
+
+              <div className="pixel-helper-group">
+                <div className="pixel-helper-label">브러시 모드</div>
+                <div className="pixel-helper-grid-buttons brush">
+                  <button
+                    className={brushMode === "draw" ? "active" : ""}
+                    type="button"
+                    onClick={() => setBrushMode("draw")}
+                  >
+                    브러시
+                  </button>
+                  <button
+                    className={brushMode === "erase" ? "active" : ""}
+                    type="button"
+                    onClick={() => setBrushMode("erase")}
+                  >
+                    지우개
+                  </button>
+                  <button type="button" onClick={handleResetEditor}>원본 다시 불러오기</button>
+                </div>
+              </div>
+
+              <div className="pixel-helper-edit-grid">
+                <div className="pixel-helper-group">
+                  <div className="pixel-helper-label">브러시 크기</div>
+                  <div className="pixel-helper-grid-buttons brush">
+                    {[1, 2, 4].map((size) => (
+                      <button
+                        key={size}
+                        className={!customBrushActive && brushSize === size ? "active" : ""}
+                        type="button"
+                        onClick={() => {
+                          setBrushSize(size);
+                          setCustomBrushSize(String(size));
+                          setCustomBrushActive(false);
+                        }}
+                      >
+                        {size}px
+                      </button>
+                    ))}
+                  </div>
+                  <details className={`pixel-helper-details ${customBrushActive ? "custom-active" : ""}`}>
+                    <summary onClick={() => setCustomBrushActive(true)}>수치 지정</summary>
+                    <div className="pixel-helper-custom-panel">
+                      <h3>브러시 크기 직접 지정</h3>
+                      <div className="pixel-helper-custom-fields">
+                        <label>
+                          브러시 크기(px)
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={customBrushSize}
+                            onChange={(event) => setCustomBrushSize(event.target.value)}
+                            onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+                              if (event.key === "Enter") {
+                                handleApplyCustomBrush();
+                              }
+                            }}
+                          />
+                        </label>
+                        <button type="button" onClick={handleApplyCustomBrush}>브러시 크기 적용</button>
+                      </div>
+                      <div className="muted">현재 브러시 크기: {brushSize}px</div>
+                    </div>
+                  </details>
                 </div>
 
                 <div className="pixel-helper-group">
-                  <div className="pixel-helper-label">브러시 모드</div>
+                  <div className="pixel-helper-label">보기 확대</div>
                   <div className="pixel-helper-grid-buttons brush">
-                    <button
-                      className={brushMode === "draw" ? "active" : ""}
-                      type="button"
-                      onClick={() => setBrushMode("draw")}
-                    >
-                      브러시
-                    </button>
-                    <button
-                      className={brushMode === "erase" ? "active" : ""}
-                      type="button"
-                      onClick={() => setBrushMode("erase")}
-                    >
-                      지우개
-                    </button>
-                    <button type="button" onClick={handleResetEditor}>원본 다시 불러오기</button>
-                  </div>
-                </div>
-
-                <div className="pixel-helper-edit-grid">
-                  <div className="pixel-helper-group">
-                    <div className="pixel-helper-label">브러시 크기</div>
-                    <div className="pixel-helper-grid-buttons brush">
-                      {[1, 2, 4].map((size) => (
-                        <button
-                          key={size}
-                          className={!customBrushActive && brushSize === size ? "active" : ""}
-                          type="button"
-                          onClick={() => {
-                            setBrushSize(size);
-                            setCustomBrushSize(String(size));
-                            setCustomBrushActive(false);
-                          }}
-                        >
-                          {size}px
-                        </button>
-                      ))}
-                    </div>
-                    <details className={`pixel-helper-details ${customBrushActive ? "custom-active" : ""}`}>
-                      <summary onClick={() => setCustomBrushActive(true)}>수치 지정</summary>
-                      <div className="pixel-helper-custom-panel">
-                        <h3>브러시 크기 직접 지정</h3>
-                        <div className="pixel-helper-custom-fields">
-                          <label>
-                            브러시 크기(px)
-                            <input
-                              type="number"
-                              min={1}
-                              step={1}
-                              value={customBrushSize}
-                              onChange={(event) => setCustomBrushSize(event.target.value)}
-                              onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
-                                if (event.key === "Enter") {
-                                  handleApplyCustomBrush();
-                                }
-                              }}
-                            />
-                          </label>
-                          <button type="button" onClick={handleApplyCustomBrush}>브러시 크기 적용</button>
-                        </div>
-                        <div className="muted">현재 브러시 크기: {brushSize}px</div>
-                      </div>
-                    </details>
-                  </div>
-
-                  <div className="pixel-helper-group">
-                    <div className="pixel-helper-label">보기 확대</div>
-                    <div className="pixel-helper-grid-buttons brush">
-                      {[8, 10, 16].map((zoom) => (
-                        <button
-                          key={zoom}
-                          className={!customZoomActive && editorZoom === zoom ? "active" : ""}
-                          type="button"
-                          onClick={() => {
-                            setEditorZoom(zoom);
-                            setCustomEditorZoom(String(zoom));
-                            setCustomZoomActive(false);
-                          }}
-                        >
-                          {zoom}x
-                        </button>
-                      ))}
-                    </div>
-                    <details className={`pixel-helper-details ${customZoomActive ? "custom-active" : ""}`}>
-                      <summary onClick={() => setCustomZoomActive(true)}>수치 지정</summary>
-                      <div className="pixel-helper-custom-panel">
-                        <h3>보기 확대 직접 지정</h3>
-                        <div className="pixel-helper-custom-fields">
-                          <label>
-                            보기 확대(배)
-                            <input
-                              type="number"
-                              min={2}
-                              step={1}
-                              value={customEditorZoom}
-                              onChange={(event) => setCustomEditorZoom(event.target.value)}
-                              onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
-                                if (event.key === "Enter") {
-                                  handleApplyCustomZoom();
-                                }
-                              }}
-                            />
-                          </label>
-                          <button type="button" onClick={handleApplyCustomZoom}>보기 확대 적용</button>
-                        </div>
-                        <div className="muted">현재 보기 확대: {editorZoom}배</div>
-                      </div>
-                    </details>
-                  </div>
-                </div>
-
-                <div className="pixel-helper-editor-box">
-                  {editorImageData ? (
-                    <canvas
-                      ref={editorCanvasRef}
-                      onPointerDown={(event) => {
-                        if (!editorImageData) {
-                          return;
-                        }
-                        pushEditorUndoState();
-                        isPaintingRef.current = true;
-                        event.currentTarget.setPointerCapture(event.pointerId);
-                        paintEditorAtPointer(event);
-                      }}
-                      onPointerMove={(event) => {
-                        updateEditorHover(event);
-                        if (!isPaintingRef.current) {
-                          return;
-                        }
-                        paintEditorAtPointer(event);
-                      }}
-                      onPointerUp={() => stopPainting()}
-                      onPointerLeave={() => {
-                        stopPainting();
-                        setCurrentHoverPixel(null);
-                      }}
-                      onPointerCancel={() => stopPainting()}
-                    />
-                  ) : (
-                    <div className="pixel-helper-placeholder">현재 편집 캔버스가 비어 있습니다.</div>
-                  )}
-                </div>
-              </div>
-
-              <div className="pixel-helper-stats">
-                <div className="panel pixel-helper-info-card">
-                  <h3>원본 정보</h3>
-                  <div className="pixel-helper-preline">{originalInfoText}</div>
-                </div>
-                <div className="panel pixel-helper-info-card">
-                  <h3>축소 결과</h3>
-                  <div className="pixel-helper-preline">{resultInfo}</div>
-                </div>
-              </div>
-
-              <div className="panel pixel-helper-download-card">
-                <div className="pixel-helper-panel-header">
-                  <h2>일괄 다운로드</h2>
-                  <div className="pixel-helper-download-actions">
-                    <button type="button" onClick={() => void handleDownloadAll()} disabled={!downloadResults.length}>모두 다운로드</button>
-                    <button type="button" onClick={clearResults} disabled={!downloadResults.length}>비우기</button>
-                  </div>
-                </div>
-
-                <div className="pixel-helper-download-list">
-                  {downloadResults.length ? downloadResults.map((result) => (
-                    <div className="pixel-helper-result-row" key={result.id}>
-                      <div>
-                        <strong>{result.name}</strong>
-                        <span>
-                          {result.pixelWidth && result.pixelHeight
-                            ? result.pixelWidth === result.outputWidth
-                              ? `${result.pixelWidth}px 유지, ${result.sizeText}`
-                              : `${result.pixelWidth}px -> ${result.outputWidth}px, ${result.sizeText}`
-                            : `${result.outputWidth} x ${result.outputHeight}, ${result.sizeText}`}
-                        </span>
-                      </div>
-                      <a
-                        href={result.url}
-                        download={buildDownloadName(result.baseName, "png", selectedPixelSize, selectedUpscaleSize)}
+                    {[8, 10, 16].map((zoom) => (
+                      <button
+                        key={zoom}
+                        className={!customZoomActive && editorZoom === zoom ? "active" : ""}
+                        type="button"
+                        onClick={() => {
+                          setEditorZoom(zoom);
+                          setCustomEditorZoom(String(zoom));
+                          setCustomZoomActive(false);
+                        }}
                       >
-                        PNG 다운로드
-                      </a>
-                      <button type="button" onClick={() => removeResult(result.id)}>제거</button>
+                        {zoom}x
+                      </button>
+                    ))}
+                  </div>
+                  <details className={`pixel-helper-details ${customZoomActive ? "custom-active" : ""}`}>
+                    <summary onClick={() => setCustomZoomActive(true)}>수치 지정</summary>
+                    <div className="pixel-helper-custom-panel">
+                      <h3>보기 확대 직접 지정</h3>
+                      <div className="pixel-helper-custom-fields">
+                        <label>
+                          보기 확대(배)
+                          <input
+                            type="number"
+                            min={2}
+                            step={1}
+                            value={customEditorZoom}
+                            onChange={(event) => setCustomEditorZoom(event.target.value)}
+                            onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+                              if (event.key === "Enter") {
+                                handleApplyCustomZoom();
+                              }
+                            }}
+                          />
+                        </label>
+                        <button type="button" onClick={handleApplyCustomZoom}>보기 확대 적용</button>
+                      </div>
+                      <div className="muted">현재 보기 확대: {editorZoom}배</div>
                     </div>
-                  )) : (
-                    <div className="pixel-helper-placeholder small">아직 처리된 결과가 없습니다.</div>
-                  )}
+                  </details>
                 </div>
+              </div>
+
+              <div className="pixel-helper-editor-box">
+                {editorImageData ? (
+                  <canvas
+                    ref={editorCanvasRef}
+                    onPointerDown={(event) => {
+                      if (!editorImageData) {
+                        return;
+                      }
+                      pushEditorUndoState();
+                      isPaintingRef.current = true;
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                      paintEditorAtPointer(event);
+                    }}
+                    onPointerMove={(event) => {
+                      updateEditorHover(event);
+                      if (!isPaintingRef.current) {
+                        return;
+                      }
+                      paintEditorAtPointer(event);
+                    }}
+                    onPointerUp={() => stopPainting()}
+                    onPointerLeave={() => {
+                      stopPainting();
+                      setCurrentHoverPixel(null);
+                    }}
+                    onPointerCancel={() => stopPainting()}
+                  />
+                ) : (
+                  <div className="pixel-helper-placeholder">현재 편집 캔버스가 비어 있습니다.</div>
+                )}
+              </div>
+
+              <div className="pixel-helper-editor-meta muted">{editorStatusText}</div>
+            </div>
+
+            <div
+              className="pixel-helper-section-resizer"
+              onPointerDown={(event) => handleSectionResizeStart(event, "editor")}
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="편집 영역 높이 조절"
+            >
+              <span />
+            </div>
+
+            <div className="pixel-helper-stats">
+              <div className="panel pixel-helper-info-card">
+                <h3>원본 정보</h3>
+                <div className="pixel-helper-preline">{originalInfoText}</div>
+              </div>
+              <div className="panel pixel-helper-info-card">
+                <h3>축소 결과</h3>
+                <div className="pixel-helper-preline">{resultInfo}</div>
+              </div>
+            </div>
+
+            <div className="panel pixel-helper-download-card">
+              <div className="pixel-helper-panel-header">
+                <h2>일괄 다운로드</h2>
+                <button type="button" onClick={() => void handleDownloadAll()}>모두 다운로드</button>
+              </div>
+
+              <div className="pixel-helper-download-list">
+                {downloadResults.length ? downloadResults.map((result) => (
+                  <div className="pixel-helper-result-row" key={result.id}>
+                    <div>
+                      <strong>{result.name}</strong>
+                      <span>
+                        {result.pixelWidth && result.pixelHeight
+                          ? result.pixelWidth === result.outputWidth
+                            ? `${result.pixelWidth}px 유지, ${result.sizeText}`
+                            : `${result.pixelWidth}px -> ${result.outputWidth}px, ${result.sizeText}`
+                          : `${result.outputWidth} x ${result.outputHeight}, ${result.sizeText}`}
+                      </span>
+                    </div>
+                    <a
+                      href={result.url}
+                      download={buildDownloadName(result.baseName, "png", selectedPixelSize, selectedUpscaleSize)}
+                    >
+                      PNG 다운로드
+                    </a>
+                  </div>
+                )) : (
+                  <div className="pixel-helper-placeholder small">아직 처리된 결과가 없습니다.</div>
+                )}
               </div>
             </div>
           </div>
