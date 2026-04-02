@@ -19,7 +19,7 @@
   tab_sprite: "스프라이트",
   tab_pixel: "에셋 편집",
   tab_export: "내보내기",
-  tab_bg_remove: "투경 제거",
+  tab_bg_remove: "배경 제거",
   tab_pixel_helper: "픽셀 에디터",
   tab_leshy_sprite: "레쉬 스프라이트",
   tab_photo_editor: "포토에디터",
