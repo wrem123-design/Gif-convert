@@ -37,9 +37,9 @@ const FILE_BRIDGE_CLEANUP_KEY = "__spriteForgePhotoEditorFileBridgeCleanup";
 const FILE_BRIDGE_BUSY_KEY = "__spriteForgePhotoEditorFileBridgeBusy";
 const CROP_STATE_KEY = "__spriteForgeCropState";
 const MODULE_KEY = "__spriteForgePhotoEditorModule";
-const DIRECT_LAYER_ADD_KEY = "__spriteForgeDirectGraphicLayerAddRequestedAt";
 const SESSION_KEY = "__spriteForgePhotoEditorSessionToken";
 const PATCHED_TOKEN_KEY = "__spriteForgePhotoEditorPatchedToken";
+const TOOLBAR_LAYOUT_KEY = "__spriteForgePhotoEditorToolbarLayout";
 const ALT_RELEASE_COOLDOWN_MS = 90;
 
 const isToolActive = () => window.__spriteForgeCutMoveToolActive === true;
@@ -117,16 +117,6 @@ const setCropState = (state) => {
 };
 const clearCropState = () => {
   window[CROP_STATE_KEY] = null;
-};
-const markDirectGraphicLayerAdd = () => {
-  window[DIRECT_LAYER_ADD_KEY] = Date.now();
-};
-const clearDirectGraphicLayerAdd = () => {
-  window[DIRECT_LAYER_ADD_KEY] = 0;
-};
-const hasPendingDirectGraphicLayerAdd = () => {
-  const requestedAt = Number(window[DIRECT_LAYER_ADD_KEY] || 0);
-  return requestedAt > 0 && Date.now() - requestedAt < 1500;
 };
 const getEditor = () => {
   const mod = window[MODULE_KEY];
@@ -275,10 +265,7 @@ const suppressNewLayerModalIfNeeded = (store, mod, sourceNode = null) => {
   if (!modal) {
     return false;
   }
-  if (!hasPendingDirectGraphicLayerAdd()) {
-    markDirectGraphicLayerAdd();
-    createGraphicLayerDirectly(store, mod);
-  }
+  createGraphicLayerDirectly(store, mod);
   clearDirectGraphicLayerAdd();
   forceClosePhotoEditorModal(store);
   return true;
@@ -290,13 +277,6 @@ const ensureNotificationPatch = (store, mod) => {
   }
   store[ORIGINAL_COMMIT_KEY] = store.commit.bind(store);
   store.commit = (type, payload, options) => {
-    if (type === "openModal" && (isNewLayerModalRequest(payload) || hasPendingDirectGraphicLayerAdd())) {
-      if (createGraphicLayerDirectly(store, mod)) {
-        clearDirectGraphicLayerAdd();
-        queueMicrotask(() => forceClosePhotoEditorModal(store));
-        return;
-      }
-    }
     if (window.__spriteForgeSuppressCutMoveNotification && type === "showNotification") {
       return;
     }
@@ -476,18 +456,7 @@ const ensureFileInputBridge = () => {
     if (label !== "레이어 추가" && label !== "Add layer") {
       return;
     }
-    const store = getStore();
-    const mod = window[MODULE_KEY];
-    markDirectGraphicLayerAdd();
-    if (!store || !mod || !createGraphicLayerDirectly(store, mod)) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    if (typeof event.stopImmediatePropagation === "function") {
-      event.stopImmediatePropagation();
-    }
-    queueMicrotask(() => forceClosePhotoEditorModal(store));
+    return;
   };
 
   const onFileInputClick = async (event) => {
@@ -926,20 +895,6 @@ const clampCropRect = (rect, activeDocument) => {
   return { x, y, width, height };
 };
 
-const createDefaultCropRect = (activeDocument) => {
-  if (!activeDocument) {
-    return null;
-  }
-  const width = Math.max(1, Math.round(activeDocument.width * 0.8));
-  const height = Math.max(1, Math.round(activeDocument.height * 0.8));
-  return clampCropRect({
-    x: Math.round((activeDocument.width - width) / 2),
-    y: Math.round((activeDocument.height - height) / 2),
-    width,
-    height
-  }, activeDocument);
-};
-
 const isPointInsideCropRect = (point, rect) => (
   !!point
   && !!rect
@@ -1360,6 +1315,111 @@ const getToolbarButtons = () => {
     .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top);
 };
 
+const loadToolbarLayout = () => {
+  try {
+    const saved = window.localStorage.getItem(TOOLBAR_LAYOUT_KEY);
+    if (saved === "single" || saved === "double" || saved === "hidden") {
+      return saved;
+    }
+  } catch (_error) {
+    // Ignore malformed local preferences.
+  }
+  return "single";
+};
+
+const saveToolbarLayout = (layout) => {
+  window[TOOLBAR_LAYOUT_KEY] = layout;
+  try {
+    window.localStorage.setItem(TOOLBAR_LAYOUT_KEY, layout);
+  } catch (_error) {
+    // Ignore storage write failures.
+  }
+};
+
+const applyToolbarLayout = (requestedLayout = null) => {
+  const layout = requestedLayout || window[TOOLBAR_LAYOUT_KEY] || loadToolbarLayout();
+  const buttons = getToolbarButtons();
+  if (!buttons.length) {
+    return;
+  }
+
+  saveToolbarLayout(layout);
+
+  const store = getStore();
+  if (store && typeof store.commit === "function") {
+    store.commit("setToolboxOpened", layout !== "hidden");
+  }
+
+  const [toggleButton, ...toolButtons] = buttons;
+  const container = toggleButton.parentElement instanceof HTMLElement ? toggleButton.parentElement : null;
+  const shell = container && container.parentElement instanceof HTMLElement ? container.parentElement : null;
+  const rail = shell && shell.parentElement instanceof HTMLElement ? shell.parentElement : null;
+
+  toggleButton.dataset.spriteForgeToolbarLayout = layout;
+  toggleButton.setAttribute(
+    "title",
+    layout === "double" ? "도구 패널: 2열" : layout === "hidden" ? "도구 패널: 숨김" : "도구 패널: 1열"
+  );
+  toggleButton.setAttribute("aria-label", toggleButton.getAttribute("title") || "도구 패널");
+
+  if (container) {
+    container.style.display = "grid";
+    container.style.gridTemplateColumns = layout === "double" ? "repeat(2, minmax(34px, 1fr))" : "1fr";
+    container.style.gridAutoRows = "minmax(36px, auto)";
+    container.style.gap = "6px";
+    container.style.justifyItems = "center";
+    container.style.alignContent = "start";
+    container.style.width = layout === "double" ? "84px" : "42px";
+    container.style.paddingTop = "4px";
+  }
+
+  for (const button of toolButtons) {
+    button.style.display = layout === "hidden" ? "none" : "";
+  }
+
+  for (const element of [shell, rail]) {
+    if (!(element instanceof HTMLElement)) {
+      continue;
+    }
+    element.style.overflow = "visible";
+    element.style.width = layout === "double" ? "92px" : "";
+    element.style.minWidth = layout === "double" ? "92px" : "";
+  }
+};
+
+const ensureToolbarLayoutToggle = () => {
+  const buttons = getToolbarButtons();
+  const toggleButton = buttons[0];
+  if (!(toggleButton instanceof HTMLButtonElement)) {
+    return null;
+  }
+
+  if (toggleButton.dataset.spriteForgeToolbarToggleBound !== "true") {
+    const cycleLayout = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === "function") {
+        event.stopImmediatePropagation();
+      }
+
+      const current = window[TOOLBAR_LAYOUT_KEY] || loadToolbarLayout();
+      const next = current === "single" ? "double" : current === "double" ? "hidden" : "single";
+      applyToolbarLayout(next);
+    };
+
+    toggleButton.dataset.spriteForgeToolbarToggleBound = "true";
+    toggleButton.addEventListener("pointerdown", cycleLayout, true);
+    toggleButton.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        cycleLayout(event);
+      }
+    }, true);
+  }
+
+  applyToolbarLayout();
+  return toggleButton;
+};
+
 const ensureToolButton = () => {
   if (!document.getElementById(TOOL_STYLE_ID)) {
     const style = document.createElement("style");
@@ -1548,12 +1608,6 @@ const ensureCropToolButton = () => {
     setCropPreviousTool(store.getters ? store.getters.activeTool : null);
     store.commit("setActiveTool", { tool: null, document: activeDocument });
     setCropToolActive(true);
-    const nextState = {
-      ...(getCropState() || {}),
-      rect: createDefaultCropRect(activeDocument)
-    };
-    setCropState(nextState);
-    syncCropOverlay(activeDocument, nextState);
   };
 
   button.addEventListener("pointerdown", activateCropTool, true);
@@ -1654,6 +1708,7 @@ const ensurePatched = async () => {
   window[MODULE_KEY] = mod;
   ensureNotificationPatch(getStore(), mod);
   ensureFileInputBridge();
+  ensureToolbarLayoutToggle();
   ensureToolButton();
   ensureCropToolButton();
   setToolActive(false);
@@ -1665,10 +1720,10 @@ const ensurePatched = async () => {
   let cropDragState = null;
 
   const observer = new MutationObserver(() => {
+    ensureToolbarLayoutToggle();
     ensureToolButton();
     ensureCropToolButton();
     const store = getStore();
-    suppressNewLayerModalIfNeeded(store, mod);
     const activeDocument = store && store.getters ? store.getters.activeDocument : null;
     const cropState = getCropState();
     if (isCropToolActive() && activeDocument && cropState) {
@@ -1796,7 +1851,7 @@ const ensurePatched = async () => {
       return;
     }
 
-    const currentState = getCropState() || { rect: createDefaultCropRect(activeDocument), overlayCanvas: null };
+    const currentState = getCropState() || { rect: null, overlayCanvas: null };
     const currentRect = clampCropRect(currentState.rect, activeDocument);
     const handle = currentRect ? getCropHandleAtPoint(documentPoint, currentRect, activeDocument) : null;
     const insideRect = currentRect ? isPointInsideCropRect(documentPoint, currentRect) : false;
@@ -1857,7 +1912,7 @@ const ensurePatched = async () => {
       return;
     }
 
-    const currentState = getCropState() || { rect: createDefaultCropRect(activeDocument), overlayCanvas: null };
+    const currentState = getCropState() || { rect: null, overlayCanvas: null };
     let nextRect = currentState.rect;
 
     if (cropDragState.mode === "draw") {

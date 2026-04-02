@@ -113,6 +113,8 @@ export function App(): JSX.Element {
   const projectDir = useEditorStore((s) => s.projectDir);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setThemeState] = useState<ThemeMode>(loadTheme);
+  const [launchMinimized, setLaunchMinimized] = useState(false);
+  const [launchSettingsBusy, setLaunchSettingsBusy] = useState(false);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(200);
   const [compactLayout, setCompactLayout] = useState(() => window.innerWidth <= 980);
   const [mountedToolTabs, setMountedToolTabs] = useState<AppTab[]>(() => (isPersistentToolTab(tab) ? [tab] : []));
@@ -127,6 +129,25 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     applyTheme(theme);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.spriteForge.getAppSettings()
+      .then((settings) => {
+        if (!cancelled) {
+          setLaunchMinimized(Boolean(settings.launchMinimized));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLaunchMinimized(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -267,6 +288,16 @@ export function App(): JSX.Element {
     { id: "photo_editor", label: t("tab_photo_editor"), icon: <IconImage /> },
     { id: "iopaint", label: t("tab_iopaint"), icon: <IconSparkles /> }
   ];
+
+  const handleLaunchMinimizedChange = useCallback(async (checked: boolean) => {
+    setLaunchSettingsBusy(true);
+    try {
+      const next = await window.spriteForge.updateAppSettings({ launchMinimized: checked });
+      setLaunchMinimized(Boolean(next.launchMinimized));
+    } finally {
+      setLaunchSettingsBusy(false);
+    }
+  }, []);
 
   return (
     <div
@@ -477,10 +508,28 @@ export function App(): JSX.Element {
                 </div>
               </div>
 
+              <div className="settings-section">
+                <span className="settings-section-title">{t("settings_launch_title")}</span>
+                <label className="settings-toggle-row">
+                  <span className="settings-toggle-copy">
+                    <strong>{t("settings_launch_minimized")}</strong>
+                    <span className="muted">{t("settings_launch_minimized_desc")}</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={launchMinimized}
+                    disabled={launchSettingsBusy}
+                    onChange={(event) => {
+                      void handleLaunchMinimizedChange(event.target.checked);
+                    }}
+                  />
+                </label>
+              </div>
+
               {/* App Info */}
               <div className="settings-section">
                 <span className="settings-section-title">정보</span>
-                <p className="settings-info">Sprite Studio v1.0.3</p>
+                <p className="settings-info">Sprite Studio v1.0.4</p>
               </div>
 
               <div className="settings-section">

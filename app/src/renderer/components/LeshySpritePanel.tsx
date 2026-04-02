@@ -121,6 +121,7 @@ export function LeshySpritePanel(): JSX.Element {
   const [animationDelayMs, setAnimationDelayMs] = useState(initialPrefs.animationDelayMs);
   const [animationFormat, setAnimationFormat] = useState<"gif">(initialPrefs.animationFormat);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; index: number } | null>(null);
+  const [spriteFilter, setSpriteFilter] = useState("");
   const previewScrollerRef = useRef<HTMLDivElement | null>(null);
   const previewPanRef = useRef<{ pointerId: number; startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const animationCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -423,6 +424,38 @@ export function LeshySpritePanel(): JSX.Element {
     )));
   };
 
+  const setAllIgnore = (ignore: boolean) => {
+    setSprites((current) => current.map((entry) => ({ ...entry, ignore })));
+  };
+
+  const applyExtractionPreset = (preset: "auto-tight" | "auto-loose" | "grid-4" | "grid-8") => {
+    if (preset === "auto-tight") {
+      setMode("auto");
+      setAlphaThreshold(0.04);
+      setMergeThreshold(1);
+      setMessage("자동 리맵 기본 프리셋을 적용했습니다.");
+      return;
+    }
+    if (preset === "auto-loose") {
+      setMode("auto");
+      setAlphaThreshold(0.08);
+      setMergeThreshold(4);
+      setMessage("자동 리맵 느슨한 프리셋을 적용했습니다.");
+      return;
+    }
+    if (preset === "grid-4") {
+      setMode("grid");
+      setCols(4);
+      setRows(4);
+      setMessage("4x4 그리드 프리셋을 적용했습니다.");
+      return;
+    }
+    setMode("grid");
+    setCols(8);
+    setRows(8);
+    setMessage("8x8 그리드 프리셋을 적용했습니다.");
+  };
+
   const openContextMenu = (event: React.MouseEvent, index: number) => {
     event.preventDefault();
     event.stopPropagation();
@@ -447,6 +480,18 @@ export function LeshySpritePanel(): JSX.Element {
     }
     return activeSprites.map((entry) => `${entry.name},${entry.x},${entry.y},${entry.w},${entry.h}`).join("\n");
   }, [outputFormat, sprites]);
+
+  const filteredSprites = useMemo(() => {
+    const normalized = spriteFilter.trim().toLowerCase();
+    return sprites
+      .map((sprite, index) => ({ sprite, index }))
+      .filter(({ sprite }) => {
+        if (!normalized) {
+          return true;
+        }
+        return sprite.name.toLowerCase().includes(normalized);
+      });
+  }, [spriteFilter, sprites]);
 
   const saveOutput = async () => {
     if (!sprites.length) {
@@ -601,6 +646,26 @@ export function LeshySpritePanel(): JSX.Element {
         </div>
       </div>
 
+      <div className="leshy-sprite-toolbar panel">
+        <div className="leshy-sprite-toolbar-group">
+          <span className="muted">빠른 프리셋</span>
+          <div className="row-buttons">
+            <button type="button" onClick={() => applyExtractionPreset("auto-tight")}>자동 기본</button>
+            <button type="button" onClick={() => applyExtractionPreset("auto-loose")}>자동 느슨하게</button>
+            <button type="button" onClick={() => applyExtractionPreset("grid-4")}>4x4</button>
+            <button type="button" onClick={() => applyExtractionPreset("grid-8")}>8x8</button>
+          </div>
+        </div>
+        <div className="leshy-sprite-toolbar-group">
+          <span className="muted">현재 상태</span>
+          <div className="row-buttons">
+            <span className="leshy-sprite-stat-chip">입력 {inputPath ? fileNameOnly(inputPath) : "-"}</span>
+            <span className="leshy-sprite-stat-chip">포함 {sprites.filter((entry) => !entry.ignore).length}/{sprites.length}</span>
+            <span className="leshy-sprite-stat-chip">모드 {mode === "auto" ? "자동" : `${cols}x${rows}`}</span>
+          </div>
+        </div>
+      </div>
+
       <div className="leshy-sprite-shell">
         <aside className="leshy-sprite-sidebar">
           <label>
@@ -669,8 +734,19 @@ export function LeshySpritePanel(): JSX.Element {
               <strong>{t("leshy_sprite_map")}</strong>
               <span className="muted">{sprites.filter((entry) => !entry.ignore).length}/{sprites.length}</span>
             </div>
+            <div className="leshy-sprite-list-tools">
+              <input
+                value={spriteFilter}
+                onChange={(event) => setSpriteFilter(event.target.value)}
+                placeholder="스프라이트 이름 검색"
+              />
+              <div className="row-buttons">
+                <button type="button" onClick={() => setAllIgnore(false)} disabled={!sprites.length}>전체 포함</button>
+                <button type="button" onClick={() => setAllIgnore(true)} disabled={!sprites.length}>전체 제외</button>
+              </div>
+            </div>
             <div className="leshy-sprite-map-scroll">
-              {sprites.map((sprite, index) => (
+              {filteredSprites.map(({ sprite, index }) => (
                 <div
                   key={`${sprite.name}:${index}`}
                   className={`leshy-sprite-map-item ${index === selectedIndex ? "active" : ""} ${sprite.ignore ? "ignored" : ""}`}
@@ -694,6 +770,7 @@ export function LeshySpritePanel(): JSX.Element {
                   </label>
                 </div>
               ))}
+              {!filteredSprites.length ? <div className="leshy-sprite-settings-empty muted">검색 결과가 없습니다.</div> : null}
             </div>
           </div>
         </aside>

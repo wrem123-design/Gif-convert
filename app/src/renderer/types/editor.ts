@@ -77,6 +77,7 @@ export interface EditorStore {
   updateClip: (clip: Clip, action: string, withUndo?: boolean) => Promise<void>;
   selectClip: (clipId: string) => void;
   selectFrame: (frameId: string, additive?: boolean) => void;
+  setSelectedFrameIds: (frameIds: string[], activeFrameIndex?: number) => void;
   setActiveFrameIndex: (index: number) => void;
   setActiveFrameIndexOnly: (index: number) => void;
   setTab: (tab: EditorTab) => void;

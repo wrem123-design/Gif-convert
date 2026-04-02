@@ -24,6 +24,9 @@ const api = {
   pickMarkRemoverSavePath: (defaultName: string): Promise<string | null> =>
     ipcRenderer.invoke("dialog:pickMarkRemoverSavePath", defaultName),
   getDefaultProjectDir: (): Promise<string> => ipcRenderer.invoke("app:getDefaultProjectDir"),
+  getAppSettings: (): Promise<{ launchMinimized: boolean }> => ipcRenderer.invoke("app:getSettings"),
+  updateAppSettings: (payload: { launchMinimized?: boolean }): Promise<{ launchMinimized: boolean }> =>
+    ipcRenderer.invoke("app:updateSettings", payload),
   getIOPaintStatus: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:getStatus"),
   ensureIOPaintInstalled: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:ensureInstalled"),
   ensureIOPaintStarted: (): Promise<IOPaintStatus> => ipcRenderer.invoke("iopaint:ensureStarted"),

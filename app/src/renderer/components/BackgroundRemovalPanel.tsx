@@ -204,6 +204,9 @@ export function BackgroundRemovalPanel(): JSX.Element {
 
   const tolerancePercent = Math.round(backgroundTolerance * 100);
   const selectedFileName = selectedFile ? fileNameOnly(selectedFile) : null;
+  const resultOutputSamples = result?.outputs.slice(0, 3) ?? [];
+  const resultFailedCount = result?.failedFiles.length ?? 0;
+  const resultSuccessCount = result?.processed ?? 0;
 
   const modeLabelKey: Record<BgRemoveMode, string> = {
     auto: "bg_remove_mode_auto",
@@ -348,6 +351,31 @@ export function BackgroundRemovalPanel(): JSX.Element {
     setProgress(null);
   };
 
+  const removeSelectedFile = () => {
+    if (!selectedFile) {
+      return;
+    }
+    setFiles((prev) => prev.filter((filePath) => filePath !== selectedFile));
+    setResult(null);
+    setMessage("");
+  };
+
+  const keepOnlyFailedFiles = () => {
+    const failedPaths = result?.failedFiles.map((item) => item.inputPath) ?? [];
+    if (!failedPaths.length) {
+      return;
+    }
+    setFiles(failedPaths);
+    setSelectedIndex(0);
+    setMessage("실패한 파일만 다시 검토할 수 있도록 목록을 정리했습니다.");
+  };
+
+  const clearResultState = () => {
+    setResult(null);
+    setMessage("");
+    setProgress(null);
+  };
+
   const chooseOutputDir = async () => {
     const selected = await window.spriteForge.pickBgRemoveOutputDir();
     if (selected) {
@@ -355,13 +383,13 @@ export function BackgroundRemovalPanel(): JSX.Element {
     }
   };
 
-  const runBatch = async () => {
+  const runBatchWithFiles = async (inputPaths: string[]) => {
     setActiveHelpTopic("bg_remove");
     setResult(null);
     setMessage("");
     setProgress(null);
 
-    if (!files.length) {
+    if (!inputPaths.length) {
       setMessage(t("bg_remove_no_inputs"));
       return;
     }
@@ -380,7 +408,7 @@ export function BackgroundRemovalPanel(): JSX.Element {
     setRunning(true);
     try {
       const data = await window.spriteForge.runBackgroundRemoval({
-        inputPaths: files,
+        inputPaths,
         outputDir: finalOutputDir,
         flipHorizontal: flipH,
         resize: {
@@ -402,6 +430,42 @@ export function BackgroundRemovalPanel(): JSX.Element {
     } finally {
       setRunning(false);
     }
+  };
+
+  const runBatch = async () => {
+    await runBatchWithFiles(files);
+  };
+
+  const retryFailed = async () => {
+    const failedPaths = result?.failedFiles.map((item) => item.inputPath) ?? [];
+    if (!failedPaths.length) {
+      return;
+    }
+    await runBatchWithFiles(failedPaths);
+  };
+
+  const applyPreset = (preset: "auto" | "photo" | "sprite") => {
+    if (preset === "auto") {
+      setMode("auto");
+      setEnhanceEdges(true);
+      setKeepOriginalSize(true);
+      setResizeEnabled(false);
+      setBackgroundTolerance(0.16);
+      return;
+    }
+    if (preset === "photo") {
+      setMode("ai");
+      setEnhanceEdges(true);
+      setKeepOriginalSize(true);
+      setResizeEnabled(false);
+      setBackgroundTolerance(0.12);
+      return;
+    }
+    setMode("solid");
+    setEnhanceEdges(false);
+    setKeepOriginalSize(true);
+    setResizeEnabled(false);
+    setBackgroundTolerance(0.22);
   };
 
   const previewStatusText = (() => {
@@ -571,6 +635,11 @@ export function BackgroundRemovalPanel(): JSX.Element {
             <div className="bg-remove-card-head">
               <h3>{t("bg_remove_mode")}</h3>
             </div>
+            <div className="bg-remove-preset-row">
+              <button type="button" onClick={() => applyPreset("auto")}>{t("bg_remove_preset_auto")}</button>
+              <button type="button" onClick={() => applyPreset("photo")}>{t("bg_remove_preset_photo")}</button>
+              <button type="button" onClick={() => applyPreset("sprite")}>{t("bg_remove_preset_sprite")}</button>
+            </div>
             <div className="bg-remove-mode-grid">
               <button type="button" className={`bg-remove-mode-card ${mode === "auto" ? "active" : ""}`} onClick={() => setMode("auto")}>
                 <strong>{t("bg_remove_mode_auto")}</strong>
@@ -676,8 +745,41 @@ export function BackgroundRemovalPanel(): JSX.Element {
               <div className="bg-remove-card-head">
                 <h3>{t("bg_remove_result")}</h3>
               </div>
-              <strong>{result.processed}/{result.total}</strong>
+              <div className="bg-remove-result-stats">
+                <div className="bg-remove-result-stat">
+                  <span className="muted">{t("bg_remove_processed")}</span>
+                  <strong>{resultSuccessCount}/{result.total}</strong>
+                </div>
+                <div className="bg-remove-result-stat">
+                  <span className="muted">{t("bg_remove_failed")}</span>
+                  <strong>{resultFailedCount}</strong>
+                </div>
+              </div>
               <div className="muted">{result.outputDir}</div>
+              {resultOutputSamples.length ? (
+                <div className="bg-remove-output-samples">
+                  <strong>출력 샘플</strong>
+                  {resultOutputSamples.map((outputPath) => (
+                    <div key={outputPath} className="muted bg-remove-output-sample" title={outputPath}>
+                      {fileNameOnly(outputPath)}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div className="row-buttons">
+                {result.failedFiles.length ? (
+                  <>
+                    <button type="button" onClick={() => void retryFailed()} disabled={running}>{t("bg_remove_retry_failed")}</button>
+                    <button type="button" onClick={keepOnlyFailedFiles} disabled={running}>실패 항목만 남기기</button>
+                  </>
+                ) : null}
+                <button type="button" onClick={clearResultState} disabled={running}>결과 지우기</button>
+              </div>
+              {result.failedFiles.length ? (
+                <div className="row-buttons">
+                  <span className="muted">실패한 파일은 아래 목록에서 바로 원인을 확인할 수 있습니다.</span>
+                </div>
+              ) : null}
               {result.failedFiles.length ? (
                 <div className="bg-remove-failed-list">
                   {result.failedFiles.map((item) => (
@@ -703,6 +805,13 @@ export function BackgroundRemovalPanel(): JSX.Element {
           />
         ))}
       </div>
+
+      {selectedFile ? (
+        <div className="bg-remove-queue-footer">
+          <span className="muted">{t("bg_remove_selected_file")}: {selectedFileName}</span>
+          <button type="button" onClick={removeSelectedFile} disabled={running || collecting}>{t("bg_remove_remove_selected")}</button>
+        </div>
+      ) : null}
 
       {message ? <div className="bg-remove-banner muted">{message}</div> : null}
     </section>

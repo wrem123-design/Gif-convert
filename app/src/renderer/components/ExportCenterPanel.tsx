@@ -56,7 +56,7 @@ export function ExportCenterPanel(): JSX.Element {
 
   return (
     <section className="panel viewport-panel export-panel">
-      <h2>{t("export_unity")}</h2>
+      <h2>{t("tab_export")}</h2>
       {!clip ? <p className="muted">{t("select_clip_to_export")}</p> : null}
 
       {clip ? (

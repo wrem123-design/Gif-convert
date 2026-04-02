@@ -742,6 +742,35 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
     setOutputPath(nextInput);
   };
 
+  const pickOutputFolder = async (): Promise<void> => {
+    const nextOutput = await window.spriteForge.pickBgRemoveOutputDir();
+    if (!nextOutput) {
+      return;
+    }
+    setOutputPath(nextOutput);
+  };
+
+  const applyMarkRemoverPreset = (preset: "watermark" | "subtitle" | "logo") => {
+    if (preset === "watermark") {
+      setDetectionPrompt("watermark");
+      setMaxBBoxPercent("10");
+      setDetectionSkip("1");
+      setTransparent(false);
+      return;
+    }
+    if (preset === "subtitle") {
+      setDetectionPrompt("subtitle text");
+      setMaxBBoxPercent("22");
+      setDetectionSkip("1");
+      setTransparent(false);
+      return;
+    }
+    setDetectionPrompt("logo watermark");
+    setMaxBBoxPercent("14");
+    setDetectionSkip("1");
+    setTransparent(false);
+  };
+
   const runPreview = (): void => {
     const normalizedInput = inputPath.trim();
     if (!normalizedInput) {
@@ -838,6 +867,25 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
     void window.spriteForge.stopMarkRemover().catch((error) => {
       setActionError(error instanceof Error ? error.message : String(error));
     });
+  };
+
+  const resetMarkRemoverState = (): void => {
+    setPreview(null);
+    setResultPreviewDataUrl("");
+    setResultOutputPath("");
+    setActionError(null);
+  };
+
+  const reuseLastOutputAsInput = (): void => {
+    const nextInput = resultOutputPath.trim() || aiStatus.lastOutputPath?.trim() || "";
+    if (!nextInput) {
+      return;
+    }
+    setInputKind("file");
+    setInputPath(nextInput);
+    setPreview(null);
+    setResultPreviewDataUrl("");
+    setActionError(null);
   };
 
   const installFrameTweaks = (): void => {
@@ -948,6 +996,18 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
     () => preview?.detections.filter((item) => item.accepted).length ?? 0,
     [preview]
   );
+  const markRemoverSummary = useMemo(() => {
+    if (hasRemovalResult) {
+      return "제거 결과가 준비되었습니다.";
+    }
+    if (preview) {
+      return `검출 ${preview.detections.length}건 · 적용 ${acceptedDetections}건`;
+    }
+    if (inputPath.trim()) {
+      return inputKind === "folder" ? "폴더 배치 준비 완료" : "파일 단건 처리 준비 완료";
+    }
+    return "입력 대상을 선택하면 바로 미리보기와 실행을 진행할 수 있습니다.";
+  }, [acceptedDetections, hasRemovalResult, inputKind, inputPath, preview]);
   const renderSetupButton = () => onOpenSettings ? (
     <button type="button" className="accent" onClick={onOpenSettings}>
       {t("ai_tools_open_settings")}
@@ -1061,6 +1121,21 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
         </div>
       </div>
 
+      <div className="iopaint-status-summary">
+        <div className="iopaint-status-summary-card">
+          <span className="muted">IOPaint</span>
+          <strong>{status.ready ? t("iopaint_status_ready") : (status.message || t("tool_install_pending"))}</strong>
+        </div>
+        <div className="iopaint-status-summary-card">
+          <span className="muted">MarkRemover</span>
+          <strong>{aiWorking ? t("markremover_running") : (aiStatus.ready ? t("tool_install_done") : t("tool_install_pending"))}</strong>
+        </div>
+        <div className="iopaint-status-summary-card">
+          <span className="muted">{t("iopaint_mode_builtin")}</span>
+          <strong>{mode === "iopaint" ? t("iopaint_native_mode") : t("iopaint_mode_ai")}</strong>
+        </div>
+      </div>
+
       {mode === "iopaint" ? (
         <>
           <div className="row-buttons iopaint-view-toggle">
@@ -1100,6 +1175,7 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
                         <strong>{t("iopaint_native_editor_title")}</strong>
                         <span className="muted">{currentModel?.name ?? "-"}</span>
                       </div>
+                      <p className="muted">{t("iopaint_native_quick_steps")}</p>
                       <div className="row-buttons">
                         <button type="button" onClick={() => void pickNativeImage()} disabled={nativeBusy}>
                           {t("iopaint_native_pick_image")}
@@ -1119,8 +1195,8 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
                       </div>
                     </div>
 
-                    <div className="iopaint-native-card">
-                      <div className="iopaint-native-field-grid">
+                      <div className="iopaint-native-card">
+                        <div className="iopaint-native-field-grid">
                         <label>
                           <span>{t("iopaint_native_model")}</span>
                           <select
@@ -1157,7 +1233,12 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
                       <label className="inline-check">
                         <input type="checkbox" checked={nativeEraseMode} onChange={(event) => setNativeEraseMode(event.target.checked)} />
                         <span>{t("iopaint_native_erase_mode")}</span>
-                      </label>
+                        </label>
+                        <div className="row-buttons">
+                          <button type="button" onClick={() => setNativeBrushSize(24)}>24px</button>
+                          <button type="button" onClick={() => setNativeBrushSize(48)}>48px</button>
+                          <button type="button" onClick={() => setNativeBrushSize(96)}>96px</button>
+                        </div>
                       <p className="muted">
                         {nativeError
                           ?? (nativeImagePath
@@ -1268,11 +1349,21 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
                       placeholder="C:\\"
                     />
                   </label>
+                  <div className="markremover-quick-summary">
+                    <span>{inputKind === "folder" ? "배치 처리" : "단건 처리"}</span>
+                    <span>{markRemoverSummary}</span>
+                  </div>
                 </div>
 
                 <div className="markremover-card">
                   <div className="markremover-card-header">
                     <strong>{t("markremover_options")}</strong>
+                  </div>
+
+                  <div className="row-buttons markremover-preset-row">
+                    <button type="button" onClick={() => applyMarkRemoverPreset("watermark")}>{t("markremover_preset_watermark")}</button>
+                    <button type="button" onClick={() => applyMarkRemoverPreset("subtitle")}>{t("markremover_preset_subtitle")}</button>
+                    <button type="button" onClick={() => applyMarkRemoverPreset("logo")}>{t("markremover_preset_logo")}</button>
                   </div>
 
                   <div className="markremover-field-grid">
@@ -1313,6 +1404,25 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
                     <input type="checkbox" checked={transparent} onChange={(event) => setTransparent(event.target.checked)} />
                     <span>{t("markremover_transparent")}</span>
                   </label>
+
+                  {inputKind === "folder" ? (
+                    <>
+                      <label>
+                        <span>{t("markremover_output")}</span>
+                        <input
+                          type="text"
+                          value={outputPath}
+                          onChange={(event) => setOutputPath(event.target.value)}
+                          placeholder="C:\\"
+                        />
+                      </label>
+                      <div className="row-buttons">
+                        <button type="button" onClick={() => void pickOutputFolder()} disabled={aiWorking}>
+                          {t("markremover_pick_output")}
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
 
                   <div className="row-buttons markremover-action-row">
                     <button type="button" onClick={runPreview} disabled={aiWorking}>
@@ -1376,6 +1486,12 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
                           <button type="button" className="accent" onClick={() => void saveRemovalResult()} disabled={aiWorking || !resultPreviewDataUrl}>
                             {t("markremover_save_result")}
                           </button>
+                          <button type="button" onClick={reuseLastOutputAsInput} disabled={aiWorking || !(resultOutputPath || aiStatus.lastOutputPath)}>
+                            결과로 다시 작업
+                          </button>
+                          <button type="button" onClick={resetMarkRemoverState} disabled={aiWorking}>
+                            결과 지우기
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -1400,6 +1516,17 @@ export function IOPaintPanel({ runtimeSettingsOnly = false, onOpenSettings }: IO
                           </div>
                         </div>
                         <p className="muted">{t("markremover_preview_hint")}</p>
+                        <div className="row-buttons">
+                          <button type="button" onClick={runPreview} disabled={aiWorking}>
+                            미리보기 갱신
+                          </button>
+                          <button type="button" className="accent" onClick={runRemoval} disabled={aiWorking}>
+                            {t("markremover_run")}
+                          </button>
+                          <button type="button" onClick={resetMarkRemoverState} disabled={aiWorking}>
+                            초기화
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ) : (

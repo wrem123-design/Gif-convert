@@ -37,6 +37,7 @@ interface HelperResult {
 }
 
 type BrushMode = "draw" | "erase";
+type PixelHelperPreset = "icon" | "avatar" | "texture" | "grid";
 
 interface PixelPoint {
   x: number;
@@ -670,6 +671,50 @@ export function PixelHelperPanel(): JSX.Element {
     setDownloadResults((prev) => [...prev, result]);
   };
 
+  const removeResult = (resultId: string) => {
+    setDownloadResults((prev) => {
+      const target = prev.find((entry) => entry.id === resultId);
+      if (target) {
+        URL.revokeObjectURL(target.url);
+      }
+      return prev.filter((entry) => entry.id !== resultId);
+    });
+  };
+
+  const clearResults = () => {
+    replaceResults([]);
+    setResultInfo("결과 목록을 비웠습니다.");
+    setBatchSummary("새 작업을 기다리는 중입니다.");
+    setStatusText("결과 목록을 정리했습니다.");
+  };
+
+  const applyWorkflowPreset = (preset: PixelHelperPreset) => {
+    if (preset === "grid") {
+      setCustomGridCount("64");
+      setCustomGridExportSize("2048");
+      setCustomGridThickness("2");
+      setCustomGridActive(true);
+      setBatchSummary("그리드 기본 프리셋을 불러왔습니다.");
+      setStatusText("그리드 생성 설정을 준비했습니다.");
+      return;
+    }
+
+    const next = preset === "icon"
+      ? { pixel: 64, upscale: 512, summary: "아이콘 작업용 프리셋을 적용했습니다." }
+      : preset === "avatar"
+        ? { pixel: 128, upscale: 1024, summary: "아바타 작업용 프리셋을 적용했습니다." }
+        : { pixel: 200, upscale: 2048, summary: "텍스처 작업용 프리셋을 적용했습니다." };
+
+    setSelectedPixelSize(next.pixel);
+    setSelectedUpscaleSize(next.upscale);
+    setCustomShrinkSize(String(next.pixel));
+    setCustomUpscaleSize(String(next.upscale));
+    setCustomShrinkActive(false);
+    setCustomUpscaleActive(false);
+    setBatchSummary(next.summary);
+    setStatusText(buildSelectedSizeStatus(next.pixel, next.upscale, Boolean(currentLoadedInput)));
+  };
+
   const setLoadedImage = (image: HTMLImageElement, input: HelperInputImage) => {
     const nextSourceImageData = getSourceImageData(sourceCanvasRef.current, image);
     setCurrentLoadedInput(input);
@@ -1090,6 +1135,7 @@ export function PixelHelperPanel(): JSX.Element {
     : "현재 편집 캔버스가 비어 있습니다.";
 
   const lowerPaneVisibleHeight = lowerPaneCollapsed ? 0 : clamp(lowerPaneHeight, minLowerPaneHeight, getMaxLowerPaneHeight());
+  const activePresetLabel = selectedUpscaleSize ? `${selectedPixelSize}px -> ${selectedUpscaleSize}px` : `${selectedPixelSize}px`;
 
   const handleLowerPanePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (lowerPaneCollapsed) {
@@ -1124,6 +1170,49 @@ export function PixelHelperPanel(): JSX.Element {
             </p>
           </div>
           <div className="pixel-helper-status-chip">{statusText}</div>
+        </section>
+
+        <section className="pixel-helper-workflow panel">
+          <div className="pixel-helper-summary-cards">
+            <div className="pixel-helper-summary-card">
+              <span className="muted">입력</span>
+              <strong>{currentInputs.length}개</strong>
+            </div>
+            <div className="pixel-helper-summary-card">
+              <span className="muted">결과</span>
+              <strong>{downloadResults.length}개</strong>
+            </div>
+            <div className="pixel-helper-summary-card">
+              <span className="muted">현재 프리셋</span>
+              <strong>{activePresetLabel}</strong>
+            </div>
+          </div>
+          <div className="pixel-helper-workflow-row">
+            <div className="pixel-helper-workflow-presets">
+              <button type="button" onClick={() => applyWorkflowPreset("icon")}>아이콘 64→512</button>
+              <button type="button" onClick={() => applyWorkflowPreset("avatar")}>아바타 128→1024</button>
+              <button type="button" onClick={() => applyWorkflowPreset("texture")}>텍스처 200→2048</button>
+              <button type="button" onClick={() => applyWorkflowPreset("grid")}>그리드 기본값</button>
+            </div>
+            <div className="pixel-helper-workflow-actions">
+              <button type="button" onClick={clearResults} disabled={!downloadResults.length}>결과 비우기</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentInputs([]);
+                  setCurrentLoadedInput(null);
+                  setLoadedMeta(null);
+                  setSourceImageData(null);
+                  setPreviewPayload(null);
+                  setBatchSummary("입력 목록을 비웠습니다.");
+                  setStatusText("새 이미지를 기다리는 중입니다.");
+                }}
+                disabled={!currentInputs.length}
+              >
+                입력 목록 비우기
+              </button>
+            </div>
+          </div>
         </section>
 
         <section className="pixel-helper-grid">
@@ -1579,7 +1668,10 @@ export function PixelHelperPanel(): JSX.Element {
               <div className="panel pixel-helper-download-card">
                 <div className="pixel-helper-panel-header">
                   <h2>일괄 다운로드</h2>
-                  <button type="button" onClick={() => void handleDownloadAll()}>모두 다운로드</button>
+                  <div className="pixel-helper-download-actions">
+                    <button type="button" onClick={() => void handleDownloadAll()} disabled={!downloadResults.length}>모두 다운로드</button>
+                    <button type="button" onClick={clearResults} disabled={!downloadResults.length}>비우기</button>
+                  </div>
                 </div>
 
                 <div className="pixel-helper-download-list">
@@ -1601,6 +1693,7 @@ export function PixelHelperPanel(): JSX.Element {
                       >
                         PNG 다운로드
                       </a>
+                      <button type="button" onClick={() => removeResult(result.id)}>제거</button>
                     </div>
                   )) : (
                     <div className="pixel-helper-placeholder small">아직 처리된 결과가 없습니다.</div>

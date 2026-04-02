@@ -437,6 +437,36 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     set({ selectedFrameIds: list.length ? list : [frameId] });
   },
 
+  setSelectedFrameIds: (frameIds, activeFrameIndex) => {
+    const state = get();
+    const clip = getClip(state.project, state.selectedClipId);
+    if (!clip || !clip.frames.length) {
+      return;
+    }
+
+    const validIds = clip.frames
+      .filter((frame) => frameIds.includes(frame.id))
+      .map((frame) => frame.id);
+
+    if (!validIds.length) {
+      return;
+    }
+
+    const fallbackIndex = clip.frames.findIndex((frame) => frame.id === validIds[0]);
+    const bounded = Math.max(
+      0,
+      Math.min(
+        typeof activeFrameIndex === "number" && Number.isFinite(activeFrameIndex) ? activeFrameIndex : fallbackIndex,
+        clip.frames.length - 1
+      )
+    );
+
+    set({
+      selectedFrameIds: validIds,
+      activeFrameIndex: bounded
+    });
+  },
+
   setActiveFrameIndex: (index) => {
     const state = get();
     const clip = getClip(state.project, state.selectedClipId);
@@ -807,7 +837,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         const maxTexture = clip.unity.maxTextureSize;
         set({
           busy: false,
-          status: `내보내기 실패: 시트 패킹이 ${maxTexture} 제한을 초과했습니다. 해결: Unity 프리셋의 최대 텍스처를 4096으로 올리거나, 프레임 범위를 줄이거나, 시퀀스 모드를 사용하세요.`
+          status: `내보내기 실패: 시트 패킹이 ${maxTexture} 제한을 초과했습니다. 해결: 최대 텍스처 크기를 4096으로 올리거나, 프레임 범위를 줄이거나, 시퀀스 모드를 사용하세요.`
         });
         return;
       }

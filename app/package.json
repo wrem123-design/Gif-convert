@@ -1,6 +1,6 @@
 {
   "name": "sprite-forge-app",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "main": "dist/main/main.js",
   "description": "Sprite Studio desktop app",
   "author": "Sprite Studio",

@@ -54,6 +54,7 @@ let hasSingleInstanceLock = app.requestSingleInstanceLock();
 const SHUTDOWN_TIMEOUT_MS = 3000;
 const SINGLE_INSTANCE_RETRY_MS = 250;
 const SINGLE_INSTANCE_TIMEOUT_MS = 10000;
+const APP_SETTINGS_FILE = "settings.json";
 const pending = new Map<
   string,
   {
@@ -62,6 +63,14 @@ const pending = new Map<
     sender?: WebContents;
   }
 >();
+
+interface AppSettings {
+  launchMinimized: boolean;
+}
+
+const defaultAppSettings: AppSettings = {
+  launchMinimized: false
+};
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -90,6 +99,32 @@ function resolveWorkerEntry(): string {
     return unpackedPath;
   }
   return path.join(__dirname, "processorWorkerBootstrap.js");
+}
+
+function getAppSettingsPath(): string {
+  return path.join(app.getPath("userData"), APP_SETTINGS_FILE);
+}
+
+async function loadAppSettings(): Promise<AppSettings> {
+  try {
+    const raw = await fs.readJson(getAppSettingsPath());
+    return {
+      launchMinimized: typeof raw?.launchMinimized === "boolean"
+        ? raw.launchMinimized
+        : defaultAppSettings.launchMinimized
+    };
+  } catch {
+    return { ...defaultAppSettings };
+  }
+}
+
+async function saveAppSettings(nextSettings: AppSettings): Promise<AppSettings> {
+  const sanitized: AppSettings = {
+    launchMinimized: Boolean(nextSettings.launchMinimized)
+  };
+  await fs.ensureDir(path.dirname(getAppSettingsPath()));
+  await fs.writeJson(getAppSettingsPath(), sanitized, { spaces: 2 });
+  return sanitized;
 }
 
 function ensureWorker(): Worker {
@@ -160,7 +195,8 @@ function enrichBgRemovePayload<T extends Record<string, unknown>>(payload: T): T
   };
 }
 
-function createWindow(): BrowserWindow {
+function createWindow(options?: { startMinimized?: boolean }): BrowserWindow {
+  const startMinimized = options?.startMinimized ?? false;
   const win = new BrowserWindow({
     width: 1600,
     height: 980,
@@ -168,6 +204,7 @@ function createWindow(): BrowserWindow {
     minHeight: 700,
     backgroundColor: "#1E1E1E",
     autoHideMenuBar: true,
+    show: !startMinimized,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -183,6 +220,27 @@ function createWindow(): BrowserWindow {
   } else {
     void win.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
+
+  if (startMinimized) {
+    win.once("ready-to-show", () => {
+      win.showInactive();
+      win.minimize();
+    });
+  }
+
+  win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    console.error("Renderer load failed:", { errorCode, errorDescription, validatedURL });
+  });
+
+  win.webContents.on("render-process-gone", (_event, details) => {
+    console.error("Renderer process gone:", details);
+  });
+
+  win.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    if (level >= 2) {
+      console.error("Renderer console:", { level, message, line, sourceId });
+    }
+  });
 
   win.setMenuBarVisibility(false);
   win.webContents.on("before-input-event", (_event, input) => {
@@ -489,7 +547,8 @@ app.whenReady().then(async () => {
     return;
   }
 
-  const win = createWindow();
+  const appSettings = await loadAppSettings();
+  const win = createWindow({ startMinimized: appSettings.launchMinimized });
   createAppMenu(win);
 
   ipcMain.handle("dialog:pickProjectDir", async () => {
@@ -602,6 +661,14 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle("app:getDefaultProjectDir", async () => ensureDefaultProjectDir());
+  ipcMain.handle("app:getSettings", async () => await loadAppSettings());
+  ipcMain.handle("app:updateSettings", async (_event, payload: Partial<AppSettings>) => {
+    const current = await loadAppSettings();
+    return await saveAppSettings({
+      ...current,
+      ...payload
+    });
+  });
   ipcMain.handle("iopaint:getStatus", async () => getIOPaintStatus());
   ipcMain.handle("iopaint:ensureInstalled", async () => await ensureIOPaintInstalled());
   ipcMain.handle("iopaint:ensureStarted", async () => await ensureIOPaintReady());
